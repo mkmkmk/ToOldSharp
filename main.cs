@@ -458,104 +458,14 @@ namespace CSharpLegacyConverter
             if (node.Pattern is DeclarationPatternSyntax declarationPattern)
             {
                 // Konwersja "expr is Type var" na "expr is Type"
-                var isExpression = SyntaxFactory.BinaryExpression(
+                return SyntaxFactory.BinaryExpression(
                     SyntaxKind.IsExpression,
                     node.Expression,
                     declarationPattern.Type
                 );
-                
-                // Znajdź if statement, który zawiera to wyrażenie
-                var ifStatement = node.Ancestors().OfType<IfStatementSyntax>().FirstOrDefault();
-                if (ifStatement != null && ifStatement.Condition == node)
-                {
-                    // Dodaj deklarację zmiennej na początku bloku if
-                    var variableName = declarationPattern.Designation is SingleVariableDesignationSyntax varDesignation
-                        ? varDesignation.Identifier.Text
-                        : "temp";
-                    
-                    var castedVariable = SyntaxFactory.LocalDeclarationStatement(
-                        SyntaxFactory.VariableDeclaration(
-                            declarationPattern.Type,
-                            SyntaxFactory.SingletonSeparatedList(
-                                SyntaxFactory.VariableDeclarator(variableName)
-                                    .WithInitializer(
-                                        SyntaxFactory.EqualsValueClause(
-                                            SyntaxFactory.CastExpression(
-                                                declarationPattern.Type,
-                                                node.Expression
-                                            )
-                                        )
-                                    )
-                            )
-                        )
-                    );
-                    
-                    // Dodaj deklarację zmiennej na początku bloku if
-                    if (ifStatement.Statement is BlockSyntax block)
-                    {
-                        var newBlock = block.WithStatements(
-                            SyntaxFactory.List(new[] { castedVariable }.Concat(block.Statements))
-                        );
-                        
-                        // Zamiast zwracać nowy IfStatement, zapamiętaj go do późniejszej zamiany
-                        var newIfStatement = SyntaxFactory.IfStatement(
-                            isExpression,
-                            newBlock,
-                            ifStatement.Else
-                        );
-                        
-                        // Zarejestruj zamianę do wykonania później
-                        RegisterReplacement(ifStatement, newIfStatement);
-                    }
-                    else
-                    {
-                        var newBlock = SyntaxFactory.Block(
-                            castedVariable,
-                            ifStatement.Statement
-                        );
-                        
-                        // Zamiast zwracać nowy IfStatement, zapamiętaj go do późniejszej zamiany
-                        var newIfStatement = SyntaxFactory.IfStatement(
-                            isExpression,
-                            newBlock,
-                            ifStatement.Else
-                        );
-                        
-                        // Zarejestruj zamianę do wykonania później
-                        RegisterReplacement(ifStatement, newIfStatement);
-                    }
-                }
-                
-                // Zawsze zwracaj wyrażenie, nie instrukcję
-                return isExpression;
             }
             
             return base.VisitIsPatternExpression(node);
-        }
-        
-        // Lista zamian do wykonania
-        private readonly List<(SyntaxNode Original, SyntaxNode Replacement)> _replacements = 
-            new List<(SyntaxNode, SyntaxNode)>();
-        
-        private void RegisterReplacement(SyntaxNode original, SyntaxNode replacement)
-        {
-            _replacements.Add((original, replacement));
-        }
-        
-        public override SyntaxNode Visit(SyntaxNode node)
-        {
-            var result = base.Visit(node);
-            
-            // Wykonaj wszystkie zarejestrowane zamiany
-            foreach (var (original, replacement) in _replacements)
-            {
-                if (result.Contains(original))
-                {
-                    result = result.ReplaceNode(original, replacement);
-                }
-            }
-            
-            return result;
         }
     }
 
