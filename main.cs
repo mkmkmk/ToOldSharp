@@ -862,7 +862,66 @@ namespace CSharpLegacyConverter
             return base.VisitFieldDeclaration(node);
         }
         
-        // Pozostałe metody dla VariableDeclarator i PropertyDeclaration...
+        public override SyntaxNode VisitVariableDeclarator(VariableDeclaratorSyntax node)
+        {
+            if (node.Initializer != null)
+            {
+                // Sprawdź czy inicjalizator zawiera wywołanie metody
+                bool containsMethodCall = node.Initializer.Value
+                    .DescendantNodes()
+                    .OfType<InvocationExpressionSyntax>()
+                    .Any();
+                    
+                if (containsMethodCall)
+                {
+                    // Utwórz komentarz z oryginalnym inicjalizatorem
+                    var initializerText = node.Initializer.ToString();
+                    var commentText = $"/* {initializerText} */";
+                    var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
+                    
+                    // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
+                    return node
+                        .WithInitializer(null)
+                        .WithTrailingTrivia(
+                            node.GetTrailingTrivia()
+                                .Add(commentTrivia)
+                        );
+                }
+            }
+            
+            return base.VisitVariableDeclarator(node);
+        }
+        
+        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
+        {
+            if (node.Initializer != null)
+            {
+                // Sprawdź czy inicjalizator zawiera wywołanie metody
+                bool containsMethodCall = node.Initializer.Value
+                    .DescendantNodes()
+                    .OfType<InvocationExpressionSyntax>()
+                    .Any();
+                    
+                if (containsMethodCall)
+                {
+                    // Utwórz komentarz z oryginalnym inicjalizatorem
+                    var initializerText = node.Initializer.ToString();
+                    var commentText = $"/* {initializerText} */";
+                    var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
+                    
+                    // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
+                    return node
+                        .WithInitializer(null)
+                        .WithTrailingTrivia(
+                            node.GetTrailingTrivia()
+                                .Add(commentTrivia)
+                        );
+                }
+            }
+            
+            return base.VisitPropertyDeclaration(node);
+        }
+        
     }
 }
 
