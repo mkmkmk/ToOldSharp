@@ -230,10 +230,57 @@ namespace CSharpLegacyConverter
                         )
                     );
                     
+                    // Dodaj odpowiednie formatowanie
+                    var leadingTrivia = SyntaxFactory.TriviaList(
+                        SyntaxFactory.Whitespace("    ")  // Wcięcie 4 spacje
+                    );
+                    
+                    var bodyLeadingTrivia = SyntaxFactory.TriviaList(
+                        SyntaxFactory.Whitespace("    ")  // Wcięcie 4 spacje
+                    );
+                    
+                    var statementsWithIndent = statements.Select(stmt => 
+                        stmt.WithLeadingTrivia(
+                            SyntaxFactory.TriviaList(
+                                SyntaxFactory.Whitespace("        ")  // Wcięcie 8 spacji dla instrukcji
+                            )
+                        )
+                    );
+                    
                     constructor = SyntaxFactory.ConstructorDeclaration(className)
-                        .WithModifiers(SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
+                        .WithModifiers(
+                            SyntaxFactory.TokenList(
+                                SyntaxFactory.Token(
+                                    SyntaxFactory.TriviaList(),
+                                    SyntaxKind.PublicKeyword,
+                                    SyntaxFactory.TriviaList(SyntaxFactory.Space)
+                                )
+                            )
+                        )
                         .WithParameterList(SyntaxFactory.ParameterList())
-                        .WithBody(SyntaxFactory.Block(statements));
+                        .WithBody(
+                            SyntaxFactory.Block(statementsWithIndent)
+                                .WithOpenBraceToken(
+                                    SyntaxFactory.Token(
+                                        SyntaxFactory.TriviaList(SyntaxFactory.Whitespace("    ")),
+                                        SyntaxKind.OpenBraceToken,
+                                        SyntaxFactory.TriviaList(SyntaxFactory.CarriageReturnLineFeed)
+                                    )
+                                )
+                                .WithCloseBraceToken(
+                                    SyntaxFactory.Token(
+                                        SyntaxFactory.TriviaList(SyntaxFactory.Whitespace("    ")),
+                                        SyntaxKind.CloseBraceToken,
+                                        SyntaxFactory.TriviaList()
+                                    )
+                                )
+                        )
+                        .WithLeadingTrivia(
+                            SyntaxFactory.TriviaList(
+                                SyntaxFactory.Whitespace("    "),
+                                SyntaxFactory.CarriageReturnLineFeed
+                            )
+                        );
                     
                     return newNode.AddMembers(constructor);
                 }
@@ -246,6 +293,10 @@ namespace CSharpLegacyConverter
                                 SyntaxKind.SimpleAssignmentExpression,
                                 SyntaxFactory.IdentifierName(i.PropertyName),
                                 i.Initializer
+                            )
+                        ).WithLeadingTrivia(
+                            SyntaxFactory.TriviaList(
+                                SyntaxFactory.Whitespace("        ")  // Wcięcie 8 spacji
                             )
                         )
                     );
@@ -260,6 +311,7 @@ namespace CSharpLegacyConverter
             return newNode;
         }
     }
+
 
     /// <summary>
     /// Konwertuje interpolację stringów na string.Format
@@ -783,7 +835,6 @@ namespace CSharpLegacyConverter
         
         // Pozostałe metody dla VariableDeclarator i PropertyDeclaration...
     }
-
 }
 
 
