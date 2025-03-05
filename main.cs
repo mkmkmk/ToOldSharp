@@ -101,6 +101,8 @@ namespace CSharpLegacyConverter
             newRoot = (CSharpSyntaxNode)new TupleRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new LocalFunctionRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new DependencyPropertyRewriter().Visit(newRoot);
+            newRoot = (CSharpSyntaxNode)new CollectionInitializerRewriter().Visit(newRoot);
+            newRoot = (CSharpSyntaxNode)new MethodCallInitializerRewriter().Visit(newRoot);
             
             // Zachowaj oryginalne formatowanie - nie używaj Formatter.Format
             string newCode = newRoot.ToFullString();
@@ -657,6 +659,129 @@ namespace CSharpLegacyConverter
             
             return base.VisitVariableDeclarator(node);
         }
+    }
+
+    /// <summary>
+    /// Konwertuje inicjalizacje kolekcji z użyciem składni = []
+    /// </summary>
+    class CollectionInitializerRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
+        {
+            if (node.Initializer != null && node.Initializer.Value.ToString() == "[]")
+            {
+                // Znajdź typ właściwości
+                string typeName = node.Type.ToString();
+                
+                // Utwórz nowy inicjalizator z pełną składnią
+                string newInitText = $"new {typeName}()";
+                var newInitializer = SyntaxFactory.EqualsValueClause(
+                    SyntaxFactory.ParseExpression(newInitText)
+                );
+                
+                return node.WithInitializer(newInitializer);
+            }
+            
+            return base.VisitPropertyDeclaration(node);
+        }
+        
+        public override SyntaxNode VisitVariableDeclarator(VariableDeclaratorSyntax node)
+        {
+            if (node.Initializer != null && node.Initializer.Value.ToString() == "[]")
+            {
+                // Znajdź typ zmiennej
+                var declaration = node.Parent as VariableDeclarationSyntax;
+                if (declaration != null)
+                {
+                    string typeName = declaration.Type.ToString();
+                    
+                    // Utwórz nowy inicjalizator z pełną składnią
+                    string newInitText = $"new {typeName}()";
+                    var newInitializer = SyntaxFactory.EqualsValueClause(
+                        SyntaxFactory.ParseExpression(newInitText)
+                    );
+                    
+                    return node.WithInitializer(newInitializer);
+                }
+            }
+            
+            return base.VisitVariableDeclarator(node);
+        }
+    }
+
+    /// <summary>
+    /// Konwertuje inicjalizatory zawierające wywołania metod
+    /// </summary>
+    class MethodCallInitializerRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
+        {
+            // Sprawdź czy to jest pole z inicjalizatorem
+            if (node.Declaration.Variables.Any(v => v.Initializer != null))
+            {
+                var newVariables = SyntaxFactory.SeparatedList<VariableDeclaratorSyntax>();
+                bool modified = false;
+                
+                foreach (var variable in node.Declaration.Variables)
+                {
+                    if (variable.Initializer != null)
+                    {
+                        // Sprawdź czy inicjalizator zawiera wywołanie metody lub dostęp do członka
+                        bool containsMethodCall = variable.Initializer.Value
+                            .DescendantNodesAndSelf()
+                            .OfType<InvocationExpressionSyntax>()
+                            .Any();
+                            
+                        bool containsMemberAccess = variable.Initializer.Value
+                            .DescendantNodesAndSelf()
+                            .OfType<MemberAccessExpressionSyntax>()
+                            .Any(m => m.Name.Identifier.Text == "StartNew" || 
+                                      m.Name.Identifier.Text.StartsWith("From"));
+                        
+                        // Sprawdź czy to nie jest DependencyProperty (już obsłużone przez DependencyPropertyRewriter)
+                        bool isDependencyProperty = node.Declaration.Type.ToString().Contains("DependencyProperty");
+                        
+                        if ((containsMethodCall || containsMemberAccess) && !isDependencyProperty)
+                        {
+                            // Utwórz komentarz z oryginalnym inicjalizatorem
+                            var initializerText = variable.Initializer.ToString();
+                            var commentText = $"/* {initializerText} */";
+                            var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
+                            
+                            // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
+                            var newVariable = variable
+                                .WithInitializer(null)
+                                .WithTrailingTrivia(
+                                    variable.GetTrailingTrivia()
+                                        .Add(commentTrivia)
+                                );
+                            
+                            newVariables = newVariables.Add(newVariable);
+                            modified = true;
+                        }
+                        else
+                        {
+                            newVariables = newVariables.Add(variable);
+                        }
+                    }
+                    else
+                    {
+                        newVariables = newVariables.Add(variable);
+                    }
+                }
+                
+                if (modified)
+                {
+                    // Utwórz nową deklarację z zakomentowanymi inicjalizatorami
+                    var newDeclaration = node.Declaration.WithVariables(newVariables);
+                    return node.WithDeclaration(newDeclaration);
+                }
+            }
+            
+            return base.VisitFieldDeclaration(node);
+        }
+        
+        // Pozostałe metody dla VariableDeclarator i PropertyDeclaration...
     }
 
 }
