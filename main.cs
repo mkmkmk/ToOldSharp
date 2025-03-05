@@ -448,7 +448,7 @@ namespace CSharpLegacyConverter
         }
     }
 
-   /// <summary>
+    /// <summary>
     /// Konwertuje pattern matching na tradycyjne sprawdzanie typów
     /// </summary>
     class PatternMatchingRewriter : CSharpSyntaxRewriter
@@ -497,11 +497,15 @@ namespace CSharpLegacyConverter
                             SyntaxFactory.List(new[] { castedVariable }.Concat(block.Statements))
                         );
                         
-                        return SyntaxFactory.IfStatement(
+                        // Zamiast zwracać nowy IfStatement, zapamiętaj go do późniejszej zamiany
+                        var newIfStatement = SyntaxFactory.IfStatement(
                             isExpression,
                             newBlock,
                             ifStatement.Else
                         );
+                        
+                        // Zarejestruj zamianę do wykonania później
+                        RegisterReplacement(ifStatement, newIfStatement);
                     }
                     else
                     {
@@ -510,18 +514,48 @@ namespace CSharpLegacyConverter
                             ifStatement.Statement
                         );
                         
-                        return SyntaxFactory.IfStatement(
+                        // Zamiast zwracać nowy IfStatement, zapamiętaj go do późniejszej zamiany
+                        var newIfStatement = SyntaxFactory.IfStatement(
                             isExpression,
                             newBlock,
                             ifStatement.Else
                         );
+                        
+                        // Zarejestruj zamianę do wykonania później
+                        RegisterReplacement(ifStatement, newIfStatement);
                     }
                 }
                 
+                // Zawsze zwracaj wyrażenie, nie instrukcję
                 return isExpression;
             }
             
             return base.VisitIsPatternExpression(node);
+        }
+        
+        // Lista zamian do wykonania
+        private readonly List<(SyntaxNode Original, SyntaxNode Replacement)> _replacements = 
+            new List<(SyntaxNode, SyntaxNode)>();
+        
+        private void RegisterReplacement(SyntaxNode original, SyntaxNode replacement)
+        {
+            _replacements.Add((original, replacement));
+        }
+        
+        public override SyntaxNode Visit(SyntaxNode node)
+        {
+            var result = base.Visit(node);
+            
+            // Wykonaj wszystkie zarejestrowane zamiany
+            foreach (var (original, replacement) in _replacements)
+            {
+                if (result.Contains(original))
+                {
+                    result = result.ReplaceNode(original, replacement);
+                }
+            }
+            
+            return result;
         }
     }
 
