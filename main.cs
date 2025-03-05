@@ -587,7 +587,7 @@ namespace CSharpLegacyConverter
     }
     
     /// <summary>
-    /// Komentuje rejestracje DependencyProperty, które mogą powodować problemy w Enterprise Architect
+    /// Komentuje inicjalizacje DependencyProperty, które mogą powodować problemy w Enterprise Architect
     /// </summary>
     class DependencyPropertyRewriter : CSharpSyntaxRewriter
     {
@@ -597,57 +597,68 @@ namespace CSharpLegacyConverter
             if (node.Declaration.Type.ToString().Contains("DependencyProperty") &&
                 node.Declaration.Variables.Any(v => v.Initializer != null))
             {
-                // Dodaj komentarz przed deklaracją
-                var leadingTrivia = node.GetLeadingTrivia()
-                    .Add(SyntaxFactory.Comment("// EA-IGNORE: DependencyProperty registration"))
-                    .Add(SyntaxFactory.CarriageReturnLineFeed);
-
-                // Zachowaj oryginalne wcięcie
-                var indentation = node.GetLeadingTrivia()
-                    .Where(t => t.IsKind(SyntaxKind.WhitespaceTrivia))
-                    .LastOrDefault();
+                // Tworzymy nową listę zmiennych, gdzie inicjalizatory są zakomentowane
+                var newVariables = SyntaxFactory.SeparatedList<VariableDeclaratorSyntax>();
                 
-                if (indentation != default)
-                    leadingTrivia = leadingTrivia.Add(indentation);
-
-                return node.WithLeadingTrivia(leadingTrivia);
+                foreach (var variable in node.Declaration.Variables)
+                {
+                    if (variable.Initializer != null)
+                    {
+                        // Utwórz komentarz z oryginalnym inicjalizatorem
+                        var initializerText = variable.Initializer.ToString();
+                        var commentText = $"/* {initializerText} */";
+                        var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
+                        
+                        // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
+                        var newVariable = variable
+                            .WithInitializer(null)
+                            .WithTrailingTrivia(
+                                variable.GetTrailingTrivia()
+                                    .Add(commentTrivia)
+                            );
+                        
+                        newVariables = newVariables.Add(newVariable);
+                    }
+                    else
+                    {
+                        newVariables = newVariables.Add(variable);
+                    }
+                }
+                
+                // Utwórz nową deklarację z zakomentowanymi inicjalizatorami
+                var newDeclaration = node.Declaration.WithVariables(newVariables);
+                return node.WithDeclaration(newDeclaration);
             }
             
             return base.VisitFieldDeclaration(node);
         }
         
-        public override SyntaxNode VisitInvocationExpression(InvocationExpressionSyntax node)
+        public override SyntaxNode VisitVariableDeclarator(VariableDeclaratorSyntax node)
         {
-            // Sprawdź czy to jest wywołanie Register lub RegisterAttached dla DependencyProperty
-            if (node.Expression is MemberAccessExpressionSyntax memberAccess &&
-                (memberAccess.Name.Identifier.Text == "Register" || 
-                 memberAccess.Name.Identifier.Text == "RegisterAttached") &&
-                memberAccess.Expression.ToString().Contains("DependencyProperty"))
+            // Sprawdź czy to jest zmienna typu DependencyProperty
+            var parentDeclaration = node.Parent as VariableDeclarationSyntax;
+            if (parentDeclaration != null && 
+                parentDeclaration.Type.ToString().Contains("DependencyProperty") &&
+                node.Initializer != null)
             {
-                // Znajdź nadrzędną instrukcję
-                var parentStatement = node.Ancestors().OfType<StatementSyntax>().FirstOrDefault();
-                if (parentStatement != null)
-                {
-                    // Dodaj komentarz przed instrukcją
-                    var leadingTrivia = parentStatement.GetLeadingTrivia()
-                        .Add(SyntaxFactory.Comment("// EA-IGNORE: DependencyProperty registration"))
-                        .Add(SyntaxFactory.CarriageReturnLineFeed);
-
-                    // Zachowaj oryginalne wcięcie
-                    var indentation = parentStatement.GetLeadingTrivia()
-                        .Where(t => t.IsKind(SyntaxKind.WhitespaceTrivia))
-                        .LastOrDefault();
-                    
-                    if (indentation != default)
-                        leadingTrivia = leadingTrivia.Add(indentation);
-
-                    return parentStatement.WithLeadingTrivia(leadingTrivia);
-                }
+                // Utwórz komentarz z oryginalnym inicjalizatorem
+                var initializerText = node.Initializer.ToString();
+                var commentText = $"/* {initializerText} */";
+                var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
+                
+                // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
+                return node
+                    .WithInitializer(null)
+                    .WithTrailingTrivia(
+                        node.GetTrailingTrivia()
+                            .Add(commentTrivia)
+                    );
             }
             
-            return base.VisitInvocationExpression(node);
+            return base.VisitVariableDeclarator(node);
         }
     }
+
 }
 
 
