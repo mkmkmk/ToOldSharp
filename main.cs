@@ -373,16 +373,45 @@ namespace CSharpLegacyConverter
                 SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression)
             );
             
-            // Zamień ?. na normalny dostęp
-            var whenNotNull = SyntaxFactory.MemberBindingExpression(
-                ((MemberBindingExpressionSyntax)node.WhenNotNull).Name
-            );
+            // Obsługa różnych typów dostępu warunkowego
+            ExpressionSyntax memberAccess;
             
-            var memberAccess = SyntaxFactory.MemberAccessExpression(
-                SyntaxKind.SimpleMemberAccessExpression,
-                node.Expression,
-                whenNotNull.Name
-            );
+            if (node.WhenNotNull is MemberBindingExpressionSyntax memberBinding)
+            {
+                // Przypadek obj?.Property
+                memberAccess = SyntaxFactory.MemberAccessExpression(
+                    SyntaxKind.SimpleMemberAccessExpression,
+                    node.Expression,
+                    memberBinding.Name
+                );
+            }
+            else if (node.WhenNotNull is InvocationExpressionSyntax invocation)
+            {
+                // Przypadek obj?.Method()
+                if (invocation.Expression is MemberBindingExpressionSyntax methodBinding)
+                {
+                    var methodAccess = SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        node.Expression,
+                        methodBinding.Name
+                    );
+                    
+                    memberAccess = SyntaxFactory.InvocationExpression(
+                        methodAccess,
+                        invocation.ArgumentList
+                    );
+                }
+                else
+                {
+                    // Jeśli nie możemy obsłużyć tego przypadku, zwróć oryginalne wyrażenie
+                    return base.VisitConditionalAccessExpression(node);
+                }
+            }
+            else
+            {
+                // Jeśli nie możemy obsłużyć tego przypadku, zwróć oryginalne wyrażenie
+                return base.VisitConditionalAccessExpression(node);
+            }
             
             return SyntaxFactory.ConditionalExpression(
                 condition,
