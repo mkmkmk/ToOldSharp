@@ -72,22 +72,25 @@ namespace CSharpLegacyConverter
             Console.WriteLine($"Przetworzono {processedFiles} plików, zmodyfikowano {modifiedFiles} plików.");
         }
 
+     
         static async Task<bool> ProcessFileAsync(string filePath)
         {
             string originalCode = File.ReadAllText(filePath);
             
-            // Parsowanie kodu źródłowego
-            SyntaxTree tree = CSharpSyntaxTree.ParseText(originalCode);
+            // Parsowanie kodu źródłowego z zachowaniem trywialnych elementów (komentarze, białe znaki)
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(originalCode, new CSharpParseOptions(
+                preprocessorSymbols: null,
+                documentationMode: DocumentationMode.Parse,
+                kind: SourceCodeKind.Regular,
+                languageVersion: LanguageVersion.Latest
+            ));
+            
             var root = await tree.GetRootAsync() as CSharpSyntaxNode;
             
             if (root == null)
                 return false;
 
-            // Utworzenie workspace dla formatowania kodu
-            var workspace = new AdhocWorkspace();
-            var options = workspace.Options;
-            
-            // Zastosowanie transformacji
+            // Zastosowanie transformacji z zachowaniem formatowania
             var newRoot = root;
             newRoot = (CSharpSyntaxNode)new ExpressionBodiedMemberRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new PropertyInitializerRewriter().Visit(newRoot);
@@ -97,21 +100,26 @@ namespace CSharpLegacyConverter
             newRoot = (CSharpSyntaxNode)new PatternMatchingRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new TupleRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new LocalFunctionRewriter().Visit(newRoot);
-
-            // Formatowanie kodu wynikowego
-            var formattedRoot = Formatter.Format(newRoot, workspace, options);
-            string newCode = formattedRoot.ToFullString();
+            newRoot = (CSharpSyntaxNode)new DependencyPropertyRewriter().Visit(newRoot);
             
-            // Zapisz plik tylko jeśli zawartość została zmieniona
+            // Zachowaj oryginalne formatowanie - nie używaj Formatter.Format
+            string newCode = newRoot.ToFullString();
+            
+            // Dodaj w metodzie ProcessFileAsync przed zapisem pliku
             if (newCode != originalCode)
             {
+                // Utwórz kopię zapasową
+                File.WriteAllText(filePath + ".bak", originalCode);
+                
+                // Zapisz zmodyfikowany plik
                 File.WriteAllText(filePath, newCode);
                 Console.WriteLine($"Zmodyfikowano: {filePath}");
                 return true;
-            }
-            
+            }            
+                        
             return false;
         }
+        
     }
 
     /// <summary>
@@ -575,6 +583,69 @@ namespace CSharpLegacyConverter
             }
             
             return newNode;
+        }
+    }
+    
+    /// <summary>
+    /// Komentuje rejestracje DependencyProperty, które mogą powodować problemy w Enterprise Architect
+    /// </summary>
+    class DependencyPropertyRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
+        {
+            // Sprawdź czy to jest deklaracja DependencyProperty
+            if (node.Declaration.Type.ToString().Contains("DependencyProperty") &&
+                node.Declaration.Variables.Any(v => v.Initializer != null))
+            {
+                // Dodaj komentarz przed deklaracją
+                var leadingTrivia = node.GetLeadingTrivia()
+                    .Add(SyntaxFactory.Comment("// EA-IGNORE: DependencyProperty registration"))
+                    .Add(SyntaxFactory.CarriageReturnLineFeed);
+
+                // Zachowaj oryginalne wcięcie
+                var indentation = node.GetLeadingTrivia()
+                    .Where(t => t.IsKind(SyntaxKind.WhitespaceTrivia))
+                    .LastOrDefault();
+                
+                if (indentation != default)
+                    leadingTrivia = leadingTrivia.Add(indentation);
+
+                return node.WithLeadingTrivia(leadingTrivia);
+            }
+            
+            return base.VisitFieldDeclaration(node);
+        }
+        
+        public override SyntaxNode VisitInvocationExpression(InvocationExpressionSyntax node)
+        {
+            // Sprawdź czy to jest wywołanie Register lub RegisterAttached dla DependencyProperty
+            if (node.Expression is MemberAccessExpressionSyntax memberAccess &&
+                (memberAccess.Name.Identifier.Text == "Register" || 
+                 memberAccess.Name.Identifier.Text == "RegisterAttached") &&
+                memberAccess.Expression.ToString().Contains("DependencyProperty"))
+            {
+                // Znajdź nadrzędną instrukcję
+                var parentStatement = node.Ancestors().OfType<StatementSyntax>().FirstOrDefault();
+                if (parentStatement != null)
+                {
+                    // Dodaj komentarz przed instrukcją
+                    var leadingTrivia = parentStatement.GetLeadingTrivia()
+                        .Add(SyntaxFactory.Comment("// EA-IGNORE: DependencyProperty registration"))
+                        .Add(SyntaxFactory.CarriageReturnLineFeed);
+
+                    // Zachowaj oryginalne wcięcie
+                    var indentation = parentStatement.GetLeadingTrivia()
+                        .Where(t => t.IsKind(SyntaxKind.WhitespaceTrivia))
+                        .LastOrDefault();
+                    
+                    if (indentation != default)
+                        leadingTrivia = leadingTrivia.Add(indentation);
+
+                    return parentStatement.WithLeadingTrivia(leadingTrivia);
+                }
+            }
+            
+            return base.VisitInvocationExpression(node);
         }
     }
 }
