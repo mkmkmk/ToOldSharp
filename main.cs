@@ -147,6 +147,7 @@ namespace CSharpLegacyConverter
             
             return base.VisitMethodDeclaration(node);
         }
+
         
         public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
         {
@@ -156,7 +157,7 @@ namespace CSharpLegacyConverter
                 // Pobierz oryginalne wyrażenie
                 var originalExpression = node.ExpressionBody.Expression.ToString();
                 
-                // Utwórz nową właściwość z getterem
+                // Utwórz nową właściwość z getterem i setterem
                 var accessorList = SyntaxFactory.AccessorList(
                     SyntaxFactory.List(new[] {
                         SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
@@ -189,12 +190,21 @@ namespace CSharpLegacyConverter
                 {
                     if (accessor.ExpressionBody != null)
                     {
-                        // Zamień akcesory z ciałami wyrażeniowymi na zwykłe akcesory
+                        // Pobierz oryginalne wyrażenie
+                        var originalExpression = accessor.ExpressionBody.Expression.ToString();
+
+                        // Utwórz nowy akcesor bez ciała wyrażeniowego
                         var newAccessor = accessor
                             .WithExpressionBody(null)
                             .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
                             .WithBody(null);
                         
+                        // Dodaj komentarz z oryginalnym wyrażeniem
+                        var comment = SyntaxFactory.Comment($" /* => {originalExpression} */");
+                        newAccessor = newAccessor.WithTrailingTrivia(
+                            newAccessor.GetTrailingTrivia().Add(comment)
+                        );
+
                         modifiedAccessors.Add(newAccessor);
                         modified = true;
                     }
