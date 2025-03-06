@@ -233,13 +233,12 @@ namespace CSharpLegacyConverter
                 
                 // Dodaj komentarz z oryginalnym inicjalizatorem
                 var comment = SyntaxFactory.Comment($" /* = {initializerValue} */");
-                var trivia = node.GetTrailingTrivia().Add(comment);
                 
-                // Utwórz nową deklarację właściwości bez inicjalizatora
+                // Utwórz nową deklarację właściwości bez inicjalizatora i bez średnika
                 var newNode = node
                     .WithInitializer(null)
-                    .WithSemicolonToken(node.SemicolonToken)
-                    .WithTrailingTrivia(trivia);
+                    .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+                    .WithTrailingTrivia(comment);
                 
                 return newNode;
             }
@@ -270,9 +269,7 @@ namespace CSharpLegacyConverter
                     
                     // Dodaj komentarz z oryginalnym inicjalizatorem
                     node = node.WithTrailingTrivia(
-                        node.GetTrailingTrivia().Add(
-                            SyntaxFactory.Comment($" /* = {initializerValue} */")
-                        )
+                        SyntaxFactory.Comment($" /* = {initializerValue} */")
                     );
                 }
                 else
@@ -293,6 +290,7 @@ namespace CSharpLegacyConverter
             return base.VisitFieldDeclaration(node);
         }
     }
+
 
     /// <summary>
     /// Konwertuje właściwości init-only na zwykłe właściwości
