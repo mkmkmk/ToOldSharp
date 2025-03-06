@@ -132,7 +132,7 @@ namespace CSharpLegacyConverter
                 var newBody = SyntaxFactory.Block();
                 
                 // Dodaj komentarz z oryginalnym wyrażeniem
-                var comment = SyntaxFactory.Comment($" // => {originalExpression}");
+                var comment = SyntaxFactory.Comment($" /* => {originalExpression} */");
                 var trivia = SyntaxFactory.TriviaList(comment);
                 
                 // Utwórz nową deklarację metody z blokiem zamiast wyrażenia
@@ -156,7 +156,7 @@ namespace CSharpLegacyConverter
                 // Pobierz oryginalne wyrażenie
                 var originalExpression = node.ExpressionBody.Expression.ToString();
                 
-                // Utwórz nową właściwość z getterem i setterem
+                // Utwórz nową właściwość z getterem
                 var accessorList = SyntaxFactory.AccessorList(
                     SyntaxFactory.List(new[] {
                         SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
@@ -165,7 +165,7 @@ namespace CSharpLegacyConverter
                 );
                 
                 // Dodaj komentarz z oryginalnym wyrażeniem
-                var comment = SyntaxFactory.Comment($" //=> {originalExpression}");
+                var comment = SyntaxFactory.Comment($" /* => {originalExpression} */");
                 var trivia = SyntaxFactory.TriviaList(comment);
                 
                 // Utwórz nową deklarację właściwości
@@ -232,7 +232,7 @@ namespace CSharpLegacyConverter
                 var initializerValue = node.Initializer.Value.ToString();
                 
                 // Dodaj komentarz z oryginalnym inicjalizatorem
-                var comment = SyntaxFactory.Comment($" // = {initializerValue}");
+                var comment = SyntaxFactory.Comment($" /* = {initializerValue} */");
                 var trivia = node.GetTrailingTrivia().Add(comment);
                 
                 // Utwórz nową deklarację właściwości bez inicjalizatora
@@ -271,7 +271,7 @@ namespace CSharpLegacyConverter
                     // Dodaj komentarz z oryginalnym inicjalizatorem
                     node = node.WithTrailingTrivia(
                         node.GetTrailingTrivia().Add(
-                            SyntaxFactory.Comment($" //= {initializerValue}")
+                            SyntaxFactory.Comment($" /* = {initializerValue} */")
                         )
                     );
                 }
