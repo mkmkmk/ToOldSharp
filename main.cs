@@ -115,6 +115,7 @@ namespace CSharpLegacyConverter
         }
     }
 
+
     /// <summary>
     /// Konwertuje wyrażenia lambda (expression-bodied members) na pełne metody z blokami
     /// </summary>
@@ -228,6 +229,7 @@ namespace CSharpLegacyConverter
         }
     }
 
+
     /// <summary>
     /// Konwertuje inicjalizatory właściwości na tradycyjne deklaracje
     /// </summary>
@@ -245,9 +247,10 @@ namespace CSharpLegacyConverter
                 var comment = SyntaxFactory.Comment($" /* = {initializerValue} */");
                 
                 // Utwórz nową deklarację właściwości bez inicjalizatora i bez średnika
+                // Ważne: nie dodajemy średnika, ponieważ już jest w AccessorList
                 var newNode = node
                     .WithInitializer(null)
-                    .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+                    .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None))
                     .WithTrailingTrivia(comment);
                 
                 return newNode;
