@@ -170,32 +170,37 @@ szczegółowe założenia:
   
   
 - ad inicjalizacje właściwości bezpośrednio przy deklaracji, np.
-
-    ```public string Name { get; set; } = "Unknown";```
+    ```
+    public string Name { get; set; } = "Unknown";
+    ```
 
   niech konwerter tylko je komentuje:
-
-    ```public string Name { get; set; } // = "Unknown";```
+    ```
+    public string Name { get; set; } /* = "Unknown"; */
+    ```
     
   taki kod:
-
-    ```private ObservableCollection<Inline> _logItems = [];```
+    ```
+    private ObservableCollection<Inline> _logItems = [];
+    ```
     
   na taki:
-
-    ```private ObservableCollection<Inline> _logItems; //= [];```
+    ```
+    private ObservableCollection<Inline> _logItems; /*= []; */
+    ```
     
     
 - ad skrócone właściwości:
-
-    ```public bool IsAdult => Age >= 18;```
+    ```
+    public bool IsAdult => Age >= 18;
+    ```
 
   może być tak poprawiane: 
+    ```
+    public bool IsAdult { get; } /* => Age >= 18; */
+    ```
 
-    ```public bool IsAdult { get; } //=> Age >= 18;```
-
-  taki kod:
-
+  np. taki kod:
     ```
     private string _name;
     public string Name 
@@ -205,37 +210,47 @@ szczegółowe założenia:
     }
     ```
   można zamienić na taki:
-
-    ```    public string Name { get; set; }    ```
+    ```
+    public string Name { get; set; }
+    ```
     (pole _name można zostawić)
-    
+
 
 - ad skrócone metody:
+    ```
+    public int Add(int a, int b) => a + b;
+    ```
 
-    ```public int Add(int a, int b) => a + b;```
-    
   wystarczy że konwerter zakomentuje nowoczesną konstrukcję i wstawi pustą treść:
-    ```public int Add(int a, int b) { } // => a + b;```
+    ```
+    public int Add(int a, int b) { } /* => a + b; */
+    ```
 
 
 - wyrażenia init-only:
-
-    ```public string Name { get; init; }```
+    ```
+    public string Name { get; init; }
+    ```
     
   niech zamienia na :
-
-    ```public string Name { get; set; }```
+    ```
+    public string Name { get; set; }
+    ```
 
 
 - ad rekordy:
-
-    ```public record Person(string Name, int Age);```
+    ```
+    public record Person(string Name, int Age);
+    ```
 
   trudna sprawa, jeżeli da radę stworzyć pełną treść to tak, 
-  ale jak doda nową treść, niech ją sformatuje
+  ale jak doda nową treść to niech ją sformatuje
 
   np.:
-      ```internal record EqStreamElement<TValue>(TValue Value) : IStreamElement;```
+    ```
+    internal record EqStreamElement<TValue>(TValue Value) : IStreamElement;
+    ```
+
   może zamienić na:
     ```
         internal class EqStreamElement<TValue> : IStreamElement
@@ -250,7 +265,9 @@ szczegółowe założenia:
     ```
     
   np.:
-    ``` internal record VarContElement<TValue>(double Delta, TValue Value);```  
+    ```
+    internal record VarContElement<TValue>(double Delta, TValue Value);
+    ```
     
   niech zamieni na:    
     ```
@@ -266,7 +283,7 @@ szczegółowe założenia:
         }
     }
     ```
-    
+
    dla nie-generycznych podobnie, ale nie wiem czy to ma znaczenie..
    
   
