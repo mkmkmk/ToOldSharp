@@ -72,7 +72,6 @@ namespace CSharpLegacyConverter
             Console.WriteLine($"Przetworzono {processedFiles} plików, zmodyfikowano {modifiedFiles} plików.");
         }
 
-     
         static async Task<bool> ProcessFileAsync(string filePath)
         {
             string originalCode = File.ReadAllText(filePath);
@@ -94,15 +93,8 @@ namespace CSharpLegacyConverter
             var newRoot = root;
             newRoot = (CSharpSyntaxNode)new ExpressionBodiedMemberRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new PropertyInitializerRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new StringInterpolationRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new NullConditionalRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new NullCoalescingRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new PatternMatchingRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new TupleRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new LocalFunctionRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new DependencyPropertyRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new CollectionInitializerRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new MethodCallInitializerRewriter().Visit(newRoot);
+            newRoot = (CSharpSyntaxNode)new InitOnlyPropertyRewriter().Visit(newRoot);
+            newRoot = (CSharpSyntaxNode)new RecordRewriter().Visit(newRoot);
             
             // Zachowaj oryginalne formatowanie - nie używaj Formatter.Format
             string newCode = newRoot.ToFullString();
@@ -121,7 +113,6 @@ namespace CSharpLegacyConverter
                         
             return false;
         }
-        
     }
 
     /// <summary>
@@ -131,16 +122,27 @@ namespace CSharpLegacyConverter
     {
         public override SyntaxNode VisitMethodDeclaration(MethodDeclarationSyntax node)
         {
-            // Jeśli metoda ma ciało wyrażeniowe (=>), zamień na blok kodu z return
+            // Jeśli metoda ma ciało wyrażeniowe (=>)
             if (node.ExpressionBody != null)
             {
-                var returnStatement = SyntaxFactory.ReturnStatement(node.ExpressionBody.Expression);
-                var block = SyntaxFactory.Block(returnStatement);
+                // Pobierz oryginalne wyrażenie
+                var originalExpression = node.ExpressionBody.Expression.ToString();
                 
-                return node
+                // Utwórz nowe ciało metody jako pusty blok
+                var newBody = SyntaxFactory.Block();
+                
+                // Dodaj komentarz z oryginalnym wyrażeniem
+                var comment = SyntaxFactory.Comment($" // => {originalExpression}");
+                var trivia = SyntaxFactory.TriviaList(comment);
+                
+                // Utwórz nową deklarację metody z blokiem zamiast wyrażenia
+                var newNode = node
                     .WithExpressionBody(null)
                     .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None))
-                    .WithBody(block);
+                    .WithBody(newBody)
+                    .WithTrailingTrivia(trivia);
+                
+                return newNode;
             }
             
             return base.VisitMethodDeclaration(node);
@@ -148,726 +150,281 @@ namespace CSharpLegacyConverter
         
         public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
         {
-            // Jeśli właściwość ma ciało wyrażeniowe (=>), zamień na blok get z return
+            // Jeśli właściwość ma ciało wyrażeniowe (=>)
             if (node.ExpressionBody != null)
             {
-                var returnStatement = SyntaxFactory.ReturnStatement(node.ExpressionBody.Expression);
-                var getAccessor = SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
-                    .WithBody(SyntaxFactory.Block(returnStatement));
+                // Pobierz oryginalne wyrażenie
+                var originalExpression = node.ExpressionBody.Expression.ToString();
                 
+                // Utwórz nową właściwość z getterem i setterem
                 var accessorList = SyntaxFactory.AccessorList(
-                    SyntaxFactory.SingletonList(getAccessor));
+                    SyntaxFactory.List(new[] {
+                        SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
+                            .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+                    })
+                );
                 
-                return node
+                // Dodaj komentarz z oryginalnym wyrażeniem
+                var comment = SyntaxFactory.Comment($" //=> {originalExpression}");
+                var trivia = SyntaxFactory.TriviaList(comment);
+                
+                // Utwórz nową deklarację właściwości
+                var newNode = node
                     .WithExpressionBody(null)
                     .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None))
-                    .WithAccessorList(accessorList);
-            }
-            
-            return base.VisitPropertyDeclaration(node);
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje inicjalizatory właściwości na tradycyjne deklaracje i inicjalizacje w konstruktorze
-    /// </summary>
-    class PropertyInitializerRewriter : CSharpSyntaxRewriter
-    {
-        private readonly Dictionary<string, List<(string PropertyName, ExpressionSyntax Initializer)>> _classInitializers = 
-            new Dictionary<string, List<(string, ExpressionSyntax)>>();
-        
-        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
-        {
-            // Jeśli właściwość ma inicjalizator, usuń go i zapamiętaj do dodania w konstruktorze
-            if (node.Initializer != null)
-            {
-                // Znajdź klasę, w której znajduje się właściwość
-                var classDeclaration = node.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault();
-                if (classDeclaration != null)
-                {
-                    string className = classDeclaration.Identifier.Text;
-                    
-                    if (!_classInitializers.ContainsKey(className))
-                    {
-                        _classInitializers[className] = new List<(string, ExpressionSyntax)>();
-                    }
-                    
-                    _classInitializers[className].Add((node.Identifier.Text, node.Initializer.Value));
-                    
-                    return node
-                        .WithInitializer(null);
-                        //.WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken));
-                }
-            }
-            
-            return base.VisitPropertyDeclaration(node);
-        }
-        
-        public override SyntaxNode VisitClassDeclaration(ClassDeclarationSyntax node)
-        {
-            // Najpierw przetwórz wszystkie właściwości w klasie
-            var newNode = (ClassDeclarationSyntax)base.VisitClassDeclaration(node);
-            
-            // Sprawdź, czy mamy inicjalizatory do dodania
-            string className = node.Identifier.Text;
-            if (_classInitializers.TryGetValue(className, out var initializers) && initializers.Count > 0)
-            {
-                // Znajdź istniejący konstruktor lub utwórz nowy
-                var constructor = newNode.Members
-                    .OfType<ConstructorDeclarationSyntax>()
-                    .FirstOrDefault(c => c.ParameterList.Parameters.Count == 0);
+                    .WithAccessorList(accessorList)
+                    .WithTrailingTrivia(trivia);
                 
-                if (constructor == null)
-                {
-                    // Utwórz nowy konstruktor
-                    var statements = initializers.Select(i => 
-                        SyntaxFactory.ExpressionStatement(
-                            SyntaxFactory.AssignmentExpression(
-                                SyntaxKind.SimpleAssignmentExpression,
-                                SyntaxFactory.IdentifierName(i.PropertyName),
-                                i.Initializer
-                            )
-                        )
-                    );
-                    
-                    // Dodaj odpowiednie formatowanie
-                    var leadingTrivia = SyntaxFactory.TriviaList(
-                        SyntaxFactory.Whitespace("    ")  // Wcięcie 4 spacje
-                    );
-                    
-                    var bodyLeadingTrivia = SyntaxFactory.TriviaList(
-                        SyntaxFactory.Whitespace("    ")  // Wcięcie 4 spacje
-                    );
-                    
-                    var statementsWithIndent = statements.Select(stmt => 
-                        stmt.WithLeadingTrivia(
-                            SyntaxFactory.TriviaList(
-                                SyntaxFactory.Whitespace("        ")  // Wcięcie 8 spacji dla instrukcji
-                            )
-                        )
-                    );
-                    
-                    constructor = SyntaxFactory.ConstructorDeclaration(className)
-                        .WithModifiers(
-                            SyntaxFactory.TokenList(
-                                SyntaxFactory.Token(
-                                    SyntaxFactory.TriviaList(),
-                                    SyntaxKind.PublicKeyword,
-                                    SyntaxFactory.TriviaList(SyntaxFactory.Space)
-                                )
-                            )
-                        )
-                        .WithParameterList(SyntaxFactory.ParameterList())
-                        .WithBody(
-                            SyntaxFactory.Block(statementsWithIndent)
-                                .WithOpenBraceToken(
-                                    SyntaxFactory.Token(
-                                        SyntaxFactory.TriviaList(SyntaxFactory.Whitespace("    ")),
-                                        SyntaxKind.OpenBraceToken,
-                                        SyntaxFactory.TriviaList(SyntaxFactory.CarriageReturnLineFeed)
-                                    )
-                                )
-                                .WithCloseBraceToken(
-                                    SyntaxFactory.Token(
-                                        SyntaxFactory.TriviaList(SyntaxFactory.Whitespace("    ")),
-                                        SyntaxKind.CloseBraceToken,
-                                        SyntaxFactory.TriviaList()
-                                    )
-                                )
-                        )
-                        .WithLeadingTrivia(
-                            SyntaxFactory.TriviaList(
-                                SyntaxFactory.Whitespace("    "),
-                                SyntaxFactory.CarriageReturnLineFeed
-                            )
-                        );
-                    
-                    return newNode.AddMembers(constructor);
-                }
-                else
-                {
-                    // Dodaj inicjalizatory do istniejącego konstruktora
-                    var newStatements = initializers.Select(i => 
-                        SyntaxFactory.ExpressionStatement(
-                            SyntaxFactory.AssignmentExpression(
-                                SyntaxKind.SimpleAssignmentExpression,
-                                SyntaxFactory.IdentifierName(i.PropertyName),
-                                i.Initializer
-                            )
-                        ).WithLeadingTrivia(
-                            SyntaxFactory.TriviaList(
-                                SyntaxFactory.Whitespace("        ")  // Wcięcie 8 spacji
-                            )
-                        )
-                    );
-                    
-                    var newBody = constructor.Body.AddStatements(newStatements.ToArray());
-                    var newConstructor = constructor.WithBody(newBody);
-                    
-                    return newNode.ReplaceNode(constructor, newConstructor);
-                }
+                return newNode;
             }
             
-            return newNode;
-        }
-    }
-
-
-    /// <summary>
-    /// Konwertuje interpolację stringów na string.Format
-    /// </summary>
-    class StringInterpolationRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitInterpolatedStringExpression(InterpolatedStringExpressionSyntax node)
-        {
-            // Konwersja $"..." na string.Format("...", ...)
-            var formatArgs = new List<ExpressionSyntax>();
-            var formatStringParts = new List<string>();
-            
-            int index = 0;
-            foreach (var content in node.Contents)
+            // Jeśli właściwość ma akcesory z ciałami wyrażeniowymi
+            if (node.AccessorList != null)
             {
-                if (content is InterpolatedStringTextSyntax textPart)
-                {
-                    formatStringParts.Add(textPart.TextToken.ValueText);
-                }
-                else if (content is InterpolationSyntax interpolation)
-                {
-                    formatStringParts.Add("{" + index + (interpolation.FormatClause != null ? ":" + interpolation.FormatClause.ToString().Substring(1) : "") + "}");
-                    formatArgs.Add(interpolation.Expression);
-                    index++;
-                }
-            }
-            
-            var formatString = string.Join("", formatStringParts);
-            var formatStringLiteral = SyntaxFactory.LiteralExpression(
-                SyntaxKind.StringLiteralExpression,
-                SyntaxFactory.Literal(formatString)
-            );
-            
-            var arguments = new List<ArgumentSyntax> { SyntaxFactory.Argument(formatStringLiteral) };
-            arguments.AddRange(formatArgs.Select(arg => SyntaxFactory.Argument(arg)));
-            
-            return SyntaxFactory.InvocationExpression(
-                SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    SyntaxFactory.IdentifierName("string"),
-                    SyntaxFactory.IdentifierName("Format")
-                ),
-                SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList(arguments))
-            );
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje operatory warunkowe null (?.) na tradycyjne sprawdzanie null
-    /// </summary>
-    class NullConditionalRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitConditionalAccessExpression(ConditionalAccessExpressionSyntax node)
-        {
-            // Konwersja obj?.Property na (obj != null) ? obj.Property : null
-            var condition = SyntaxFactory.BinaryExpression(
-                SyntaxKind.NotEqualsExpression,
-                node.Expression,
-                SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression)
-            );
-            
-            // Obsługa różnych typów dostępu warunkowego
-            ExpressionSyntax memberAccess;
-            
-            if (node.WhenNotNull is MemberBindingExpressionSyntax memberBinding)
-            {
-                // Przypadek obj?.Property
-                memberAccess = SyntaxFactory.MemberAccessExpression(
-                    SyntaxKind.SimpleMemberAccessExpression,
-                    node.Expression,
-                    memberBinding.Name
-                );
-            }
-            else if (node.WhenNotNull is InvocationExpressionSyntax invocation)
-            {
-                // Przypadek obj?.Method()
-                if (invocation.Expression is MemberBindingExpressionSyntax methodBinding)
-                {
-                    var methodAccess = SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        node.Expression,
-                        methodBinding.Name
-                    );
-                    
-                    memberAccess = SyntaxFactory.InvocationExpression(
-                        methodAccess,
-                        invocation.ArgumentList
-                    );
-                }
-                else
-                {
-                    // Jeśli nie możemy obsłużyć tego przypadku, zwróć oryginalne wyrażenie
-                    return base.VisitConditionalAccessExpression(node);
-                }
-            }
-            else
-            {
-                // Jeśli nie możemy obsłużyć tego przypadku, zwróć oryginalne wyrażenie
-                return base.VisitConditionalAccessExpression(node);
-            }
-            
-            return SyntaxFactory.ConditionalExpression(
-                condition,
-                memberAccess,
-                SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression)
-            );
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje operatory koalescencji null (??) na tradycyjne sprawdzanie null
-    /// </summary>
-    class NullCoalescingRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitBinaryExpression(BinaryExpressionSyntax node)
-        {
-            if (node.Kind() == SyntaxKind.CoalesceExpression)
-            {
-                // Konwersja a ?? b na (a != null) ? a : b
-                var condition = SyntaxFactory.BinaryExpression(
-                    SyntaxKind.NotEqualsExpression,
-                    node.Left,
-                    SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression)
-                );
-                
-                return SyntaxFactory.ConditionalExpression(
-                    condition,
-                    node.Left,
-                    node.Right
-                );
-            }
-            
-            return base.VisitBinaryExpression(node);
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje pattern matching na tradycyjne sprawdzanie typów
-    /// </summary>
-    class PatternMatchingRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitIsPatternExpression(IsPatternExpressionSyntax node)
-        {
-            if (node.Pattern is DeclarationPatternSyntax declarationPattern)
-            {
-                // Konwersja "expr is Type var" na "expr is Type"
-                return SyntaxFactory.BinaryExpression(
-                    SyntaxKind.IsExpression,
-                    node.Expression,
-                    declarationPattern.Type
-                );
-            }
-            
-            return base.VisitIsPatternExpression(node);
-        }
-    }
-
-
-    /// <summary>
-    /// Konwertuje tuple na tradycyjne klasy Tuple lub ValueTuple
-    /// </summary>
-    class TupleRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitTupleExpression(TupleExpressionSyntax node)
-        {
-            // Konwersja (a, b) na new Tuple<object, object>(a, b)
-            var arguments = SyntaxFactory.SeparatedList(
-                node.Arguments.Select(arg => SyntaxFactory.Argument(arg.Expression))
-            );
-            
-            // Utwórz typ generyczny Tuple<object, object, ...>
-            var typeArgs = SyntaxFactory.SeparatedList<TypeSyntax>(
-                Enumerable.Repeat(SyntaxFactory.PredefinedType(SyntaxFactory.Token(SyntaxKind.ObjectKeyword)), node.Arguments.Count)
-            );
-            
-            var tupleType = SyntaxFactory.GenericName(
-                SyntaxFactory.Identifier("Tuple"),
-                SyntaxFactory.TypeArgumentList(typeArgs)
-            );
-            
-            return SyntaxFactory.ObjectCreationExpression(
-                tupleType,
-                SyntaxFactory.ArgumentList(arguments),
-                null
-            );
-        }
-
-        public override SyntaxNode VisitAssignmentExpression(AssignmentExpressionSyntax node)
-        {
-            if (node.Left is TupleExpressionSyntax tupleExpr)
-            {
-                // Konwersja (a, b) = GetValues() na var temp = GetValues(); a = temp.Item1; b = temp.Item2;
-                var tempVar = SyntaxFactory.IdentifierName("tupleTemp");
-                var statements = new List<StatementSyntax>();
-                
-                // Deklaracja zmiennej tymczasowej
-                statements.Add(
-                    SyntaxFactory.LocalDeclarationStatement(
-                        SyntaxFactory.VariableDeclaration(
-                            SyntaxFactory.IdentifierName("var"),
-                            SyntaxFactory.SingletonSeparatedList(
-                                SyntaxFactory.VariableDeclarator("tupleTemp")
-                                    .WithInitializer(
-                                        SyntaxFactory.EqualsValueClause(node.Right)
-                                    )
-                            )
-                        )
-                    )
-                );
-                
-                // Przypisania do poszczególnych elementów tuple
-                for (int i = 0; i < tupleExpr.Arguments.Count; i++)
-                {
-                    var itemAccess = SyntaxFactory.MemberAccessExpression(
-                        SyntaxKind.SimpleMemberAccessExpression,
-                        tempVar,
-                        SyntaxFactory.IdentifierName($"Item{i + 1}")
-                    );
-                    
-                    statements.Add(
-                        SyntaxFactory.ExpressionStatement(
-                            SyntaxFactory.AssignmentExpression(
-                                SyntaxKind.SimpleAssignmentExpression,
-                                ((ArgumentSyntax)tupleExpr.Arguments[i]).Expression,
-                                itemAccess
-                            )
-                        )
-                    );
-                }
-                
-                // Zastąp wyrażenie przypisania blokiem kodu
-                var block = SyntaxFactory.Block(statements);
-                
-                // Znajdź nadrzędną instrukcję i zastąp ją blokiem
-                var parentStatement = node.Ancestors().OfType<StatementSyntax>().FirstOrDefault();
-                if (parentStatement != null)
-                {
-                    return block;
-                }
-            }
-            
-            return base.VisitAssignmentExpression(node);
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje lokalne funkcje na prywatne metody klasy
-    /// </summary>
-    class LocalFunctionRewriter : CSharpSyntaxRewriter
-    {
-        private readonly Dictionary<string, List<LocalFunctionStatementSyntax>> _classLocalFunctions = 
-            new Dictionary<string, List<LocalFunctionStatementSyntax>>();
-        
-        public override SyntaxNode VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
-        {
-            // Znajdź klasę, w której znajduje się lokalna funkcja
-            var classDeclaration = node.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault();
-            if (classDeclaration != null)
-            {
-                string className = classDeclaration.Identifier.Text;
-                
-                if (!_classLocalFunctions.ContainsKey(className))
-                {
-                    _classLocalFunctions[className] = new List<LocalFunctionStatementSyntax>();
-                }
-                
-                _classLocalFunctions[className].Add(node);
-                
-                // Usuń lokalną funkcję z oryginalnego miejsca
-                return null;
-            }
-            
-            return base.VisitLocalFunctionStatement(node);
-        }
-        
-        public override SyntaxNode VisitClassDeclaration(ClassDeclarationSyntax node)
-        {
-            // Najpierw przetwórz wszystkie elementy w klasie
-            var newNode = (ClassDeclarationSyntax)base.VisitClassDeclaration(node);
-            
-            // Sprawdź, czy mamy lokalne funkcje do dodania jako metody
-            string className = node.Identifier.Text;
-            if (_classLocalFunctions.TryGetValue(className, out var localFunctions) && localFunctions.Count > 0)
-            {
-                // Konwertuj lokalne funkcje na prywatne metody
-                var methods = localFunctions.Select(lf => 
-                    SyntaxFactory.MethodDeclaration(
-                        lf.ReturnType,
-                        lf.Identifier
-                    )
-                    .WithModifiers(SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PrivateKeyword)))
-                    .WithParameterList(lf.ParameterList)
-                    .WithBody(lf.Body)
-                );
-                
-                return newNode.AddMembers(methods.ToArray());
-            }
-            
-            return newNode;
-        }
-    }
-    
-    /// <summary>
-    /// Komentuje inicjalizacje DependencyProperty, które mogą powodować problemy w Enterprise Architect
-    /// </summary>
-    class DependencyPropertyRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
-        {
-            // Sprawdź czy to jest deklaracja DependencyProperty
-            if (node.Declaration.Type.ToString().Contains("DependencyProperty") &&
-                node.Declaration.Variables.Any(v => v.Initializer != null))
-            {
-                // Tworzymy nową listę zmiennych, gdzie inicjalizatory są zakomentowane
-                var newVariables = SyntaxFactory.SeparatedList<VariableDeclaratorSyntax>();
-                
-                foreach (var variable in node.Declaration.Variables)
-                {
-                    if (variable.Initializer != null)
-                    {
-                        // Utwórz komentarz z oryginalnym inicjalizatorem
-                        var initializerText = variable.Initializer.ToString();
-                        var commentText = $"/* {initializerText} */";
-                        var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
-                        
-                        // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
-                        var newVariable = variable
-                            .WithInitializer(null)
-                            .WithTrailingTrivia(
-                                variable.GetTrailingTrivia()
-                                    .Add(commentTrivia)
-                            );
-                        
-                        newVariables = newVariables.Add(newVariable);
-                    }
-                    else
-                    {
-                        newVariables = newVariables.Add(variable);
-                    }
-                }
-                
-                // Utwórz nową deklarację z zakomentowanymi inicjalizatorami
-                var newDeclaration = node.Declaration.WithVariables(newVariables);
-                return node.WithDeclaration(newDeclaration);
-            }
-            
-            return base.VisitFieldDeclaration(node);
-        }
-        
-        public override SyntaxNode VisitVariableDeclarator(VariableDeclaratorSyntax node)
-        {
-            // Sprawdź czy to jest zmienna typu DependencyProperty
-            var parentDeclaration = node.Parent as VariableDeclarationSyntax;
-            if (parentDeclaration != null && 
-                parentDeclaration.Type.ToString().Contains("DependencyProperty") &&
-                node.Initializer != null)
-            {
-                // Utwórz komentarz z oryginalnym inicjalizatorem
-                var initializerText = node.Initializer.ToString();
-                var commentText = $"/* {initializerText} */";
-                var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
-                
-                // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
-                return node
-                    .WithInitializer(null)
-                    .WithTrailingTrivia(
-                        node.GetTrailingTrivia()
-                            .Add(commentTrivia)
-                    );
-            }
-            
-            return base.VisitVariableDeclarator(node);
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje inicjalizacje kolekcji z użyciem składni = []
-    /// </summary>
-    class CollectionInitializerRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
-        {
-            if (node.Initializer != null && node.Initializer.Value.ToString() == "[]")
-            {
-                // Znajdź typ właściwości
-                string typeName = node.Type.ToString();
-                
-                // Utwórz nowy inicjalizator z pełną składnią
-                string newInitText = $"new {typeName}()";
-                var newInitializer = SyntaxFactory.EqualsValueClause(
-                    SyntaxFactory.ParseExpression(newInitText)
-                );
-                
-                return node.WithInitializer(newInitializer);
-            }
-            
-            return base.VisitPropertyDeclaration(node);
-        }
-        
-        public override SyntaxNode VisitVariableDeclarator(VariableDeclaratorSyntax node)
-        {
-            if (node.Initializer != null && node.Initializer.Value.ToString() == "[]")
-            {
-                // Znajdź typ zmiennej
-                var declaration = node.Parent as VariableDeclarationSyntax;
-                if (declaration != null)
-                {
-                    string typeName = declaration.Type.ToString();
-                    
-                    // Utwórz nowy inicjalizator z pełną składnią
-                    string newInitText = $"new {typeName}()";
-                    var newInitializer = SyntaxFactory.EqualsValueClause(
-                        SyntaxFactory.ParseExpression(newInitText)
-                    );
-                    
-                    return node.WithInitializer(newInitializer);
-                }
-            }
-            
-            return base.VisitVariableDeclarator(node);
-        }
-    }
-
-    /// <summary>
-    /// Konwertuje inicjalizatory zawierające wywołania metod
-    /// </summary>
-    class MethodCallInitializerRewriter : CSharpSyntaxRewriter
-    {
-        public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
-        {
-            // Sprawdź czy to jest pole z inicjalizatorem
-            if (node.Declaration.Variables.Any(v => v.Initializer != null))
-            {
-                var newVariables = SyntaxFactory.SeparatedList<VariableDeclaratorSyntax>();
+                var accessors = node.AccessorList.Accessors;
+                var modifiedAccessors = new List<AccessorDeclarationSyntax>();
                 bool modified = false;
                 
-                foreach (var variable in node.Declaration.Variables)
+                foreach (var accessor in accessors)
                 {
-                    if (variable.Initializer != null)
+                    if (accessor.ExpressionBody != null)
                     {
-                        // Sprawdź czy inicjalizator zawiera wywołanie metody lub dostęp do członka
-                        bool containsMethodCall = variable.Initializer.Value
-                            .DescendantNodesAndSelf()
-                            .OfType<InvocationExpressionSyntax>()
-                            .Any();
-                            
-                        bool containsMemberAccess = variable.Initializer.Value
-                            .DescendantNodesAndSelf()
-                            .OfType<MemberAccessExpressionSyntax>()
-                            .Any(m => m.Name.Identifier.Text == "StartNew" || 
-                                      m.Name.Identifier.Text.StartsWith("From"));
+                        // Zamień akcesory z ciałami wyrażeniowymi na zwykłe akcesory
+                        var newAccessor = accessor
+                            .WithExpressionBody(null)
+                            .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+                            .WithBody(null);
                         
-                        // Sprawdź czy to nie jest DependencyProperty (już obsłużone przez DependencyPropertyRewriter)
-                        bool isDependencyProperty = node.Declaration.Type.ToString().Contains("DependencyProperty");
-                        
-                        if ((containsMethodCall || containsMemberAccess) && !isDependencyProperty)
-                        {
-                            // Utwórz komentarz z oryginalnym inicjalizatorem
-                            var initializerText = variable.Initializer.ToString();
-                            var commentText = $"/* {initializerText} */";
-                            var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
-                            
-                            // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
-                            var newVariable = variable
-                                .WithInitializer(null)
-                                .WithTrailingTrivia(
-                                    variable.GetTrailingTrivia()
-                                        .Add(commentTrivia)
-                                );
-                            
-                            newVariables = newVariables.Add(newVariable);
-                            modified = true;
-                        }
-                        else
-                        {
-                            newVariables = newVariables.Add(variable);
-                        }
+                        modifiedAccessors.Add(newAccessor);
+                        modified = true;
                     }
                     else
                     {
-                        newVariables = newVariables.Add(variable);
+                        modifiedAccessors.Add(accessor);
                     }
                 }
                 
                 if (modified)
                 {
-                    // Utwórz nową deklarację z zakomentowanymi inicjalizatorami
-                    var newDeclaration = node.Declaration.WithVariables(newVariables);
-                    return node.WithDeclaration(newDeclaration);
-                }
-            }
-            
-            return base.VisitFieldDeclaration(node);
-        }
-        
-        public override SyntaxNode VisitVariableDeclarator(VariableDeclaratorSyntax node)
-        {
-            if (node.Initializer != null)
-            {
-                // Sprawdź czy inicjalizator zawiera wywołanie metody
-                bool containsMethodCall = node.Initializer.Value
-                    .DescendantNodes()
-                    .OfType<InvocationExpressionSyntax>()
-                    .Any();
+                    var newAccessorList = SyntaxFactory.AccessorList(
+                        SyntaxFactory.List(modifiedAccessors)
+                    );
                     
-                if (containsMethodCall)
-                {
-                    // Utwórz komentarz z oryginalnym inicjalizatorem
-                    var initializerText = node.Initializer.ToString();
-                    var commentText = $"/* {initializerText} */";
-                    var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
-                    
-                    // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
-                    return node
-                        .WithInitializer(null)
-                        .WithTrailingTrivia(
-                            node.GetTrailingTrivia()
-                                .Add(commentTrivia)
-                        );
-                }
-            }
-            
-            return base.VisitVariableDeclarator(node);
-        }
-        
-        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
-        {
-            if (node.Initializer != null)
-            {
-                // Sprawdź czy inicjalizator zawiera wywołanie metody
-                bool containsMethodCall = node.Initializer.Value
-                    .DescendantNodes()
-                    .OfType<InvocationExpressionSyntax>()
-                    .Any();
-                    
-                if (containsMethodCall)
-                {
-                    // Utwórz komentarz z oryginalnym inicjalizatorem
-                    var initializerText = node.Initializer.ToString();
-                    var commentText = $"/* {initializerText} */";
-                    var commentTrivia = SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, commentText);
-                    
-                    // Utwórz nowy deklarator bez inicjalizatora, ale z komentarzem
-                    return node
-                        .WithInitializer(null)
-                        .WithTrailingTrivia(
-                            node.GetTrailingTrivia()
-                                .Add(commentTrivia)
-                        );
+                    return node.WithAccessorList(newAccessorList);
                 }
             }
             
             return base.VisitPropertyDeclaration(node);
         }
+    }
+
+    /// <summary>
+    /// Konwertuje inicjalizatory właściwości na tradycyjne deklaracje
+    /// </summary>
+    class PropertyInitializerRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
+        {
+            // Jeśli właściwość ma inicjalizator
+            if (node.Initializer != null)
+            {
+                // Pobierz oryginalne wyrażenie inicjalizatora
+                var initializerValue = node.Initializer.Value.ToString();
+                
+                // Dodaj komentarz z oryginalnym inicjalizatorem
+                var comment = SyntaxFactory.Comment($" // = {initializerValue}");
+                var trivia = node.GetTrailingTrivia().Add(comment);
+                
+                // Utwórz nową deklarację właściwości bez inicjalizatora
+                var newNode = node
+                    .WithInitializer(null)
+                    .WithSemicolonToken(node.SemicolonToken)
+                    .WithTrailingTrivia(trivia);
+                
+                return newNode;
+            }
+            
+            return base.VisitPropertyDeclaration(node);
+        }
         
+        public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
+        {
+            // Sprawdź, czy któraś z deklaracji zmiennych ma inicjalizator
+            var variables = node.Declaration.Variables;
+            var modifiedVariables = new List<VariableDeclaratorSyntax>();
+            bool modified = false;
+            
+            foreach (var variable in variables)
+            {
+                if (variable.Initializer != null)
+                {
+                    // Pobierz oryginalne wyrażenie inicjalizatora
+                    var initializerValue = variable.Initializer.Value.ToString();
+                    
+                    // Utwórz nową deklarację zmiennej bez inicjalizatora
+                    var newVariable = variable
+                        .WithInitializer(null);
+                    
+                    modifiedVariables.Add(newVariable);
+                    modified = true;
+                    
+                    // Dodaj komentarz z oryginalnym inicjalizatorem
+                    node = node.WithTrailingTrivia(
+                        node.GetTrailingTrivia().Add(
+                            SyntaxFactory.Comment($" //= {initializerValue}")
+                        )
+                    );
+                }
+                else
+                {
+                    modifiedVariables.Add(variable);
+                }
+            }
+            
+            if (modified)
+            {
+                var newDeclaration = node.Declaration.WithVariables(
+                    SyntaxFactory.SeparatedList(modifiedVariables)
+                );
+                
+                return node.WithDeclaration(newDeclaration);
+            }
+            
+            return base.VisitFieldDeclaration(node);
+        }
+    }
+
+    /// <summary>
+    /// Konwertuje właściwości init-only na zwykłe właściwości
+    /// </summary>
+    class InitOnlyPropertyRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
+        {
+            if (node.AccessorList != null)
+            {
+                var accessors = node.AccessorList.Accessors;
+                var modifiedAccessors = new List<AccessorDeclarationSyntax>();
+                bool modified = false;
+                
+                foreach (var accessor in accessors)
+                {
+                    if (accessor.Keyword.IsKind(SyntaxKind.InitKeyword))
+                    {
+                        // Zamień init na set
+                        var newAccessor = accessor
+                            .WithKeyword(SyntaxFactory.Token(SyntaxKind.SetKeyword));
+                        
+                        modifiedAccessors.Add(newAccessor);
+                        modified = true;
+                    }
+                    else
+                    {
+                        modifiedAccessors.Add(accessor);
+                    }
+                }
+                
+                if (modified)
+                {
+                    var newAccessorList = SyntaxFactory.AccessorList(
+                        SyntaxFactory.List(modifiedAccessors)
+                    );
+                    
+                    return node.WithAccessorList(newAccessorList);
+                }
+            }
+            
+            return base.VisitPropertyDeclaration(node);
+        }
+    }
+
+    /// <summary>
+    /// Konwertuje rekordy na klasy
+    /// </summary>
+    class RecordRewriter : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitRecordDeclaration(RecordDeclarationSyntax node)
+        {
+            // Pobierz parametry konstruktora z deklaracji rekordu
+            var parameterList = node.ParameterList;
+            
+            if (parameterList == null || !parameterList.Parameters.Any())
+            {
+                // Jeśli rekord nie ma parametrów, zamień go na prostą klasę
+                var classDeclaration = SyntaxFactory.ClassDeclaration(node.Identifier)
+                    .WithModifiers(node.Modifiers)
+                    .WithBaseList(node.BaseList)
+                    .WithTypeParameterList(node.TypeParameterList)
+                    .WithMembers(node.Members)
+                    .WithLeadingTrivia(node.GetLeadingTrivia())
+                    .WithTrailingTrivia(node.GetTrailingTrivia());
+                
+                return classDeclaration;
+            }
+            
+            // Utwórz klasę z tymi samymi modyfikatorami, identyfikatorem i listą bazową
+            var newClassDeclaration = SyntaxFactory.ClassDeclaration(node.Identifier)
+                .WithModifiers(node.Modifiers)
+                .WithBaseList(node.BaseList)
+                .WithTypeParameterList(node.TypeParameterList)
+                .WithLeadingTrivia(node.GetLeadingTrivia())
+                .WithTrailingTrivia(node.GetTrailingTrivia());
+            
+            // Utwórz właściwości na podstawie parametrów rekordu
+            var properties = new List<MemberDeclarationSyntax>();
+            var constructorParameters = new List<ParameterSyntax>();
+            var constructorAssignments = new List<StatementSyntax>();
+            
+            foreach (var parameter in parameterList.Parameters)
+            {
+                // Utwórz właściwość
+                var propertyName = char.ToUpper(parameter.Identifier.Text[0]) + parameter.Identifier.Text.Substring(1);
+                var property = SyntaxFactory.PropertyDeclaration(parameter.Type, propertyName)
+                    .WithModifiers(SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
+                    .WithAccessorList(
+                        SyntaxFactory.AccessorList(
+                            SyntaxFactory.List(new[] {
+                                SyntaxFactory.AccessorDeclaration(SyntaxKind.GetAccessorDeclaration)
+                                    .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken)),
+                                SyntaxFactory.AccessorDeclaration(SyntaxKind.SetAccessorDeclaration)
+                                    .WithModifiers(SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PrivateKeyword)))
+                                    .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+                            })
+                        )
+                    );
+                
+                properties.Add(property);
+                
+                // Dodaj parametr do konstruktora
+                constructorParameters.Add(parameter);
+                
+                // Dodaj przypisanie w konstruktorze
+                var assignment = SyntaxFactory.ExpressionStatement(
+                    SyntaxFactory.AssignmentExpression(
+                        SyntaxKind.SimpleAssignmentExpression,
+                        SyntaxFactory.IdentifierName(propertyName),
+                        SyntaxFactory.IdentifierName(parameter.Identifier.Text)
+                    )
+                );
+                
+                constructorAssignments.Add(assignment);
+            }
+            
+            // Utwórz konstruktor
+            var constructor = SyntaxFactory.ConstructorDeclaration(node.Identifier.Text)
+                .WithModifiers(SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
+                .WithParameterList(SyntaxFactory.ParameterList(SyntaxFactory.SeparatedList(constructorParameters)))
+                .WithBody(SyntaxFactory.Block(constructorAssignments));
+            
+            // Dodaj konstruktor i właściwości do klasy
+            var members = new List<MemberDeclarationSyntax>();
+            members.AddRange(properties);
+            members.Add(constructor);
+            members.AddRange(node.Members);
+            
+            newClassDeclaration = newClassDeclaration.WithMembers(SyntaxFactory.List(members));
+            
+            return newClassDeclaration;
+        }
     }
 }
-
-
