@@ -365,19 +365,19 @@ namespace CSharpLegacyConverter
                 {
                     throw new NotImplementedException("mariusz jednak weź ten kod poniżej !!!!!!!!!");
                     // Dla właściwości z expression body (=>)
-                    var newNode = node
-                        .WithInitializer(null)
-                        .WithSemicolonToken(
-                            SyntaxFactory.Token(
-                                SyntaxTriviaList.Empty,
-                                SyntaxKind.SemicolonToken,
-                                ";",  // tekst tokenu
-                                ";",  // wartość tokenu
-                                newTrivia
-                            )
+                    // var newNode = node
+                    //     .WithInitializer(null)
+                    //     .WithSemicolonToken(
+                    //         SyntaxFactory.Token(
+                    //             SyntaxTriviaList.Empty,
+                    //             SyntaxKind.SemicolonToken,
+                    //             ";",  // tekst tokenu
+                    //             ";",  // wartość tokenu
+                    //             newTrivia
+                    //         )
 
-                        );
-                    return newNode;
+                    //     );
+                    // return newNode;
 
                 }
             }
