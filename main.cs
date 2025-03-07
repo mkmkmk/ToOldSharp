@@ -77,6 +77,9 @@ namespace CSharpLegacyConverter
 
         static async Task<bool> ProcessFileAsync(string filePath)
         {
+            if (filePath.EndsWith(".g.cs"))
+                return false;
+
             string originalCode = File.ReadAllText(filePath);
 
             // Parsowanie kodu źródłowego z zachowaniem trywialnych elementów (komentarze, białe znaki)
