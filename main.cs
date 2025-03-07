@@ -305,7 +305,6 @@ namespace CSharpLegacyConverter
             return base.VisitPropertyDeclaration(node);
         }
 
-
         public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
         {
             // // Sprawdź, czy pole jest publiczne
@@ -327,7 +326,7 @@ namespace CSharpLegacyConverter
                 {
                     // Pobierz oryginalne wyrażenie inicjalizatora
                     var initializerValue = variable.Initializer.Value.ToString();
-                    initializerComment = $" /* = {initializerValue} */";
+                    initializerComment = $"/* = {initializerValue} */";
 
                     // Utwórz nową deklarację zmiennej bez inicjalizatora
                     var newVariable = variable
@@ -344,29 +343,28 @@ namespace CSharpLegacyConverter
 
             if (modified)
             {
-                // var newDeclaration = node.Declaration.WithVariables(
-                //     SyntaxFactory.SeparatedList(modifiedVariables)
-                // );
-
-                // // Zachowaj istniejące trailing trivia i dodaj nasz komentarz
-                // var existingTrivia = node.GetTrailingTrivia();
-                // var commentTrivia = SyntaxFactory.Comment(initializerComment);
-                // var newTrivia = existingTrivia.Add(commentTrivia);
-
-                // return node
-                //     .WithDeclaration(newDeclaration)
-                //     .WithTrailingTrivia(newTrivia);
-
                 var newDeclaration = node.Declaration.WithVariables(
                     SyntaxFactory.SeparatedList(modifiedVariables)
                 );
 
-                // Znajdź średnik i dodaj komentarz po nim
+                // Znajdź token średnika
                 var semicolonToken = node.SemicolonToken;
-                var newSemicolonToken = semicolonToken.WithTrailingTrivia(
-                    semicolonToken.TrailingTrivia
-                        .Add(SyntaxFactory.Comment(initializerComment))
-                );
+
+                // Pobierz istniejące trailing trivia średnika
+                var existingTrivia = semicolonToken.TrailingTrivia;
+
+                // Utwórz nowe trivia, dodając komentarz przed istniejącymi trivia
+                var newTrivia = SyntaxTriviaList.Create(SyntaxFactory.SyntaxTrivia(SyntaxKind.WhitespaceTrivia, " "))
+                    .Add(SyntaxFactory.SyntaxTrivia(SyntaxKind.MultiLineCommentTrivia, initializerComment));
+
+                // Dodaj istniejące trivia na końcu
+                foreach (var trivia in existingTrivia)
+                {
+                    newTrivia = newTrivia.Add(trivia);
+                }
+
+                // Utwórz nowy token średnika z nowymi trivia
+                var newSemicolonToken = semicolonToken.WithTrailingTrivia(newTrivia);
 
                 return node
                     .WithDeclaration(newDeclaration)
@@ -375,6 +373,7 @@ namespace CSharpLegacyConverter
 
             return base.VisitFieldDeclaration(node);
         }
+
     }
 
 
