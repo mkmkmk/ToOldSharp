@@ -81,9 +81,11 @@ namespace CSharpLegacyConverter
                 return false;
 
             string originalCode = File.ReadAllText(filePath);
+            var modNamespaceCode = new NamespaceConverter().Convert(originalCode);
+            // var modNamespaceCode = originalCode;
 
             // Parsowanie kodu źródłowego z zachowaniem trywialnych elementów (komentarze, białe znaki)
-            SyntaxTree tree = CSharpSyntaxTree.ParseText(originalCode, new CSharpParseOptions(
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(modNamespaceCode, new CSharpParseOptions(
                 preprocessorSymbols: null,
                 documentationMode: DocumentationMode.Parse,
                 kind: SourceCodeKind.Regular,
@@ -121,6 +123,47 @@ namespace CSharpLegacyConverter
         }
     }
 
+
+
+
+    public class NamespaceConverter
+    {
+        public string Convert(string sourceCode)
+        {
+            try
+            {
+                // Parsuj kod źródłowy
+                SyntaxTree tree = CSharpSyntaxTree.ParseText(sourceCode);
+                CompilationUnitSyntax root = (CompilationUnitSyntax)tree.GetRoot();
+
+                // Znajdź deklarację namespace z składnią z średnikiem
+                var fileScopedNamespace = root.Members.OfType<FileScopedNamespaceDeclarationSyntax>().FirstOrDefault();
+                if (fileScopedNamespace == null)
+                {
+                    return sourceCode; // Nic do zmiany
+                }
+
+                // Pobierz tekst deklaracji namespace (bez średnika)
+                string namespaceDeclaration = fileScopedNamespace.ToString().TrimEnd(';', ' ', '\r', '\n', '\t');
+
+                // Znajdź indeks średnika w oryginalnym kodzie
+                int semicolonIndex = fileScopedNamespace.SemicolonToken.SpanStart;
+
+                // Podziel kod na części
+                string beforeSemicolon = sourceCode.Substring(0, semicolonIndex);
+                string afterSemicolon = sourceCode.Substring(semicolonIndex + 1); // +1 aby pominąć średnik
+
+                // Utwórz nowy kod z deklaracją namespace z klamrami
+                return beforeSemicolon + "\n{\n" + afterSemicolon + "\n}";
+            }
+            catch (Exception ex)
+            {
+                // W przypadku błędu, zwróć oryginalny kod
+                Console.WriteLine($"Błąd podczas konwersji: {ex.Message}");
+                return sourceCode;
+            }
+        }
+    }
 
     /// <summary>
     /// Konwertuje wyrażenia lambda (expression-bodied members) na pełne metody z blokami
