@@ -6,8 +6,6 @@ using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Formatting;
-using Microsoft.CodeAnalysis.Editing;
 
 namespace CSharpLegacyConverter
 {
@@ -35,6 +33,11 @@ namespace CSharpLegacyConverter
                 return;
             }
 
+            // await ProcessFileAsync(directoryPath + "/AvalonDock.4.72.1/source/AvalonDocPanelMemoryLeaks/MainWindow.xaml.cs");
+            // await ProcessFileAsync(directoryPath + "/AvalonDock.4.72.1/source/AutomationTest/AvalonDockTest/TestHelpers/SwitchContextToUiThreadAwaiter.cs");
+            // await ProcessFileAsync(directoryPath + "/SymuLBNP_2_4/Controls/Led.xaml.cs");
+            // return;
+
             try
             {
                 await ProcessDirectoryAsync(directoryPath);
@@ -54,17 +57,17 @@ namespace CSharpLegacyConverter
 
             // Pobierz wszystkie pliki C# w katalogu i podkatalogach
             var files = Directory.GetFiles(directoryPath, "*.cs", SearchOption.AllDirectories);
-            
+
             Console.WriteLine($"Znaleziono {files.Length} plików C# do przetworzenia.");
 
             foreach (var file in files)
             {
                 bool fileModified = await ProcessFileAsync(file);
                 processedFiles++;
-                
+
                 if (fileModified)
                     modifiedFiles++;
-                
+
                 if (processedFiles % 10 == 0)
                     Console.WriteLine($"Przetworzono {processedFiles} plików...");
             }
@@ -75,7 +78,7 @@ namespace CSharpLegacyConverter
         static async Task<bool> ProcessFileAsync(string filePath)
         {
             string originalCode = File.ReadAllText(filePath);
-            
+
             // Parsowanie kodu źródłowego z zachowaniem trywialnych elementów (komentarze, białe znaki)
             SyntaxTree tree = CSharpSyntaxTree.ParseText(originalCode, new CSharpParseOptions(
                 preprocessorSymbols: null,
@@ -83,9 +86,9 @@ namespace CSharpLegacyConverter
                 kind: SourceCodeKind.Regular,
                 languageVersion: LanguageVersion.Latest
             ));
-            
+
             var root = await tree.GetRootAsync() as CSharpSyntaxNode;
-            
+
             if (root == null)
                 return false;
 
@@ -95,22 +98,22 @@ namespace CSharpLegacyConverter
             newRoot = (CSharpSyntaxNode)new PropertyInitializerRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new InitOnlyPropertyRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new RecordRewriter().Visit(newRoot);
-            
+
             // Zachowaj oryginalne formatowanie - nie używaj Formatter.Format
             string newCode = newRoot.ToFullString();
-            
+
             // Dodaj w metodzie ProcessFileAsync przed zapisem pliku
             if (newCode != originalCode)
             {
                 // Utwórz kopię zapasową
                 File.WriteAllText(filePath + ".bak", originalCode);
-                
+
                 // Zapisz zmodyfikowany plik
                 File.WriteAllText(filePath, newCode);
                 Console.WriteLine($"Zmodyfikowano: {filePath}");
                 return true;
-            }            
-                        
+            }
+
             return false;
         }
     }
@@ -128,28 +131,28 @@ namespace CSharpLegacyConverter
             {
                 // Pobierz oryginalne wyrażenie
                 var originalExpression = node.ExpressionBody.Expression.ToString();
-                
+
                 // Utwórz nowe ciało metody jako pusty blok
                 var newBody = SyntaxFactory.Block();
-                
+
                 // Dodaj komentarz z oryginalnym wyrażeniem
                 var comment = SyntaxFactory.Comment($" /* => {originalExpression} */");
                 var trivia = SyntaxFactory.TriviaList(comment);
-                
+
                 // Utwórz nową deklarację metody z blokiem zamiast wyrażenia
                 var newNode = node
                     .WithExpressionBody(null)
                     .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None))
                     .WithBody(newBody)
                     .WithTrailingTrivia(trivia);
-                
+
                 return newNode;
             }
-            
+
             return base.VisitMethodDeclaration(node);
         }
 
-        
+
         public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
         {
             // Jeśli właściwość ma ciało wyrażeniowe (=>)
@@ -157,7 +160,7 @@ namespace CSharpLegacyConverter
             {
                 // Pobierz oryginalne wyrażenie
                 var originalExpression = node.ExpressionBody.Expression.ToString();
-                
+
                 // Utwórz nową właściwość z getterem i setterem
                 var accessorList = SyntaxFactory.AccessorList(
                     SyntaxFactory.List(new[] {
@@ -165,28 +168,44 @@ namespace CSharpLegacyConverter
                             .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
                     })
                 );
-                
-                // Dodaj komentarz z oryginalnym wyrażeniem
+
+                // Zbierz wszystkie trivia z expression body i średnika
+                var expressionBodyTrivia = node.ExpressionBody.GetLeadingTrivia()
+                    .AddRange(node.ExpressionBody.GetTrailingTrivia());
+
+                var semicolonTrivia = node.SemicolonToken.LeadingTrivia
+                    .AddRange(node.SemicolonToken.TrailingTrivia);
+
+                // Utwórz komentarz z oryginalnym wyrażeniem
                 var comment = SyntaxFactory.Comment($" /* => {originalExpression} */");
-                var trivia = SyntaxFactory.TriviaList(comment);
-                
+
+                // Połącz wszystkie trivia
+                var allTrivia = SyntaxFactory.TriviaList(comment)
+                    .AddRange(expressionBodyTrivia)
+                    .AddRange(semicolonTrivia);
+
+                // Dodaj trivia do zamykającego nawiasu klamrowego
+                accessorList = accessorList.WithCloseBraceToken(
+                    accessorList.CloseBraceToken.WithTrailingTrivia(allTrivia)
+                );
+
                 // Utwórz nową deklarację właściwości
                 var newNode = node
                     .WithExpressionBody(null)
                     .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None))
-                    .WithAccessorList(accessorList)
-                    .WithTrailingTrivia(trivia);
-                
+                    .WithAccessorList(accessorList);
+                // .WithTrailingTrivia(trivia);
+
                 return newNode;
             }
-            
+
             // Jeśli właściwość ma akcesory z ciałami wyrażeniowymi
             if (node.AccessorList != null)
             {
                 var accessors = node.AccessorList.Accessors;
                 var modifiedAccessors = new List<AccessorDeclarationSyntax>();
                 bool modified = false;
-                
+
                 foreach (var accessor in accessors)
                 {
                     if (accessor.ExpressionBody != null)
@@ -199,7 +218,7 @@ namespace CSharpLegacyConverter
                             .WithExpressionBody(null)
                             .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
                             .WithBody(null);
-                        
+
                         // Dodaj komentarz z oryginalnym wyrażeniem
                         var comment = SyntaxFactory.Comment($" /* => {originalExpression} */");
                         newAccessor = newAccessor.WithTrailingTrivia(
@@ -214,17 +233,17 @@ namespace CSharpLegacyConverter
                         modifiedAccessors.Add(accessor);
                     }
                 }
-                
+
                 if (modified)
                 {
                     var newAccessorList = SyntaxFactory.AccessorList(
                         SyntaxFactory.List(modifiedAccessors)
                     );
-                    
+
                     return node.WithAccessorList(newAccessorList);
                 }
             }
-            
+
             return base.VisitPropertyDeclaration(node);
         }
     }
@@ -242,64 +261,118 @@ namespace CSharpLegacyConverter
             {
                 // Pobierz oryginalne wyrażenie inicjalizatora
                 var initializerValue = node.Initializer.Value.ToString();
-                
+
                 // Dodaj komentarz z oryginalnym inicjalizatorem
                 var comment = SyntaxFactory.Comment($" /* = {initializerValue} */");
-                
-                // Utwórz nową deklarację właściwości bez inicjalizatora i bez średnika
-                // Ważne: nie dodajemy średnika, ponieważ już jest w AccessorList
-                var newNode = node
+                var newTrivia = SyntaxTriviaList.Create(comment).AddRange(node.GetTrailingTrivia());
+
+                if (node.AccessorList != null)
+                {
+                    // Utwórz nową deklarację właściwości bez inicjalizatora i bez średnika
+                    // Ważne: nie dodajemy średnika, ponieważ już jest w AccessorList
+                    var newNode = node
                     .WithInitializer(null)
                     .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None))
-                    .WithTrailingTrivia(comment);
-                
-                return newNode;
+                    //.WithTrailingTrivia(comment);
+                    .WithAccessorList(
+                        node.AccessorList.WithCloseBraceToken(
+                            node.AccessorList.CloseBraceToken.WithTrailingTrivia(newTrivia)
+                        )
+                    );
+                    return newNode;
+                }
+                else
+                {
+                    throw new NotImplementedException("mariusz jednak weź ten kod poniżej !!!!!!!!!");
+                    // Dla właściwości z expression body (=>)
+                    var newNode = node
+                        .WithInitializer(null)
+                        .WithSemicolonToken(
+                            SyntaxFactory.Token(
+                                SyntaxTriviaList.Empty,
+                                SyntaxKind.SemicolonToken,
+                                ";",  // tekst tokenu
+                                ";",  // wartość tokenu
+                                newTrivia
+                            )
+
+                        );
+                    return newNode;
+
+                }
             }
-            
+
             return base.VisitPropertyDeclaration(node);
         }
-        
+
+
         public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
         {
+            // // Sprawdź, czy pole jest publiczne
+            // bool isPublic = node.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword));
+
+            // // Jeśli pole nie jest publiczne, nie modyfikuj go
+            // if (!isPublic)
+            //     return base.VisitFieldDeclaration(node);
+
             // Sprawdź, czy któraś z deklaracji zmiennych ma inicjalizator
             var variables = node.Declaration.Variables;
             var modifiedVariables = new List<VariableDeclaratorSyntax>();
             bool modified = false;
-            
+            string initializerComment = "";
+
             foreach (var variable in variables)
             {
                 if (variable.Initializer != null)
                 {
                     // Pobierz oryginalne wyrażenie inicjalizatora
                     var initializerValue = variable.Initializer.Value.ToString();
-                    
+                    initializerComment = $" /* = {initializerValue} */";
+
                     // Utwórz nową deklarację zmiennej bez inicjalizatora
                     var newVariable = variable
                         .WithInitializer(null);
-                    
+
                     modifiedVariables.Add(newVariable);
                     modified = true;
-                    
-                    // Dodaj komentarz z oryginalnym inicjalizatorem
-                    node = node.WithTrailingTrivia(
-                        SyntaxFactory.Comment($" /* = {initializerValue} */")
-                    );
                 }
                 else
                 {
                     modifiedVariables.Add(variable);
                 }
             }
-            
+
             if (modified)
             {
+                // var newDeclaration = node.Declaration.WithVariables(
+                //     SyntaxFactory.SeparatedList(modifiedVariables)
+                // );
+
+                // // Zachowaj istniejące trailing trivia i dodaj nasz komentarz
+                // var existingTrivia = node.GetTrailingTrivia();
+                // var commentTrivia = SyntaxFactory.Comment(initializerComment);
+                // var newTrivia = existingTrivia.Add(commentTrivia);
+
+                // return node
+                //     .WithDeclaration(newDeclaration)
+                //     .WithTrailingTrivia(newTrivia);
+
                 var newDeclaration = node.Declaration.WithVariables(
                     SyntaxFactory.SeparatedList(modifiedVariables)
                 );
-                
-                return node.WithDeclaration(newDeclaration);
+
+                // Znajdź średnik i dodaj komentarz po nim
+                var semicolonToken = node.SemicolonToken;
+                var newSemicolonToken = semicolonToken.WithTrailingTrivia(
+                    semicolonToken.TrailingTrivia
+                        .Add(SyntaxFactory.Comment(initializerComment))
+                );
+
+                return node
+                    .WithDeclaration(newDeclaration)
+                    .WithSemicolonToken(newSemicolonToken);
             }
-            
+
             return base.VisitFieldDeclaration(node);
         }
     }
@@ -317,7 +390,7 @@ namespace CSharpLegacyConverter
                 var accessors = node.AccessorList.Accessors;
                 var modifiedAccessors = new List<AccessorDeclarationSyntax>();
                 bool modified = false;
-                
+
                 foreach (var accessor in accessors)
                 {
                     if (accessor.Keyword.IsKind(SyntaxKind.InitKeyword))
@@ -325,7 +398,7 @@ namespace CSharpLegacyConverter
                         // Zamień init na set
                         var newAccessor = accessor
                             .WithKeyword(SyntaxFactory.Token(SyntaxKind.SetKeyword));
-                        
+
                         modifiedAccessors.Add(newAccessor);
                         modified = true;
                     }
@@ -334,17 +407,17 @@ namespace CSharpLegacyConverter
                         modifiedAccessors.Add(accessor);
                     }
                 }
-                
+
                 if (modified)
                 {
                     var newAccessorList = SyntaxFactory.AccessorList(
                         SyntaxFactory.List(modifiedAccessors)
                     );
-                    
+
                     return node.WithAccessorList(newAccessorList);
                 }
             }
-            
+
             return base.VisitPropertyDeclaration(node);
         }
     }
@@ -358,7 +431,7 @@ namespace CSharpLegacyConverter
         {
             // Pobierz parametry konstruktora z deklaracji rekordu
             var parameterList = node.ParameterList;
-            
+
             if (parameterList == null || !parameterList.Parameters.Any())
             {
                 // Jeśli rekord nie ma parametrów, zamień go na prostą klasę
@@ -369,10 +442,10 @@ namespace CSharpLegacyConverter
                     .WithMembers(node.Members)
                     .WithLeadingTrivia(node.GetLeadingTrivia())
                     .WithTrailingTrivia(node.GetTrailingTrivia());
-                
+
                 return classDeclaration;
             }
-            
+
             // Utwórz klasę z tymi samymi modyfikatorami, identyfikatorem i listą bazową
             var newClassDeclaration = SyntaxFactory.ClassDeclaration(node.Identifier)
                 .WithModifiers(node.Modifiers)
@@ -380,12 +453,12 @@ namespace CSharpLegacyConverter
                 .WithTypeParameterList(node.TypeParameterList)
                 .WithLeadingTrivia(node.GetLeadingTrivia())
                 .WithTrailingTrivia(node.GetTrailingTrivia());
-            
+
             // Utwórz właściwości na podstawie parametrów rekordu
             var properties = new List<MemberDeclarationSyntax>();
             var constructorParameters = new List<ParameterSyntax>();
             var constructorAssignments = new List<StatementSyntax>();
-            
+
             foreach (var parameter in parameterList.Parameters)
             {
                 // Utwórz właściwość
@@ -403,12 +476,12 @@ namespace CSharpLegacyConverter
                             })
                         )
                     );
-                
+
                 properties.Add(property);
-                
+
                 // Dodaj parametr do konstruktora
                 constructorParameters.Add(parameter);
-                
+
                 // Dodaj przypisanie w konstruktorze
                 var assignment = SyntaxFactory.ExpressionStatement(
                     SyntaxFactory.AssignmentExpression(
@@ -417,24 +490,24 @@ namespace CSharpLegacyConverter
                         SyntaxFactory.IdentifierName(parameter.Identifier.Text)
                     )
                 );
-                
+
                 constructorAssignments.Add(assignment);
             }
-            
+
             // Utwórz konstruktor
             var constructor = SyntaxFactory.ConstructorDeclaration(node.Identifier.Text)
                 .WithModifiers(SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
                 .WithParameterList(SyntaxFactory.ParameterList(SyntaxFactory.SeparatedList(constructorParameters)))
                 .WithBody(SyntaxFactory.Block(constructorAssignments));
-            
+
             // Dodaj konstruktor i właściwości do klasy
             var members = new List<MemberDeclarationSyntax>();
             members.AddRange(properties);
             members.Add(constructor);
             members.AddRange(node.Members);
-            
+
             newClassDeclaration = newClassDeclaration.WithMembers(SyntaxFactory.List(members));
-            
+
             return newClassDeclaration;
         }
     }
