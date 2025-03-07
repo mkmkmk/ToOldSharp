@@ -126,35 +126,126 @@ namespace CSharpLegacyConverter
 
 
     /// <summary>
-    /// Konwerter Roslyn usuwający operator ! z wartości domyślnych parametrów funkcji
+    /// Konwerter Roslyn usuwający operator ! z wartości domyślnych parametrów funkcji, pól i zdarzeń
     /// </summary>
     public class NullForgivingOperatorRemover : CSharpSyntaxRewriter
     {
+        // Metoda pomocnicza do usuwania operatora ! z wyrażenia
+        private ExpressionSyntax RemoveNullForgivingOperator(ExpressionSyntax expression)
+        {
+            if (expression is PostfixUnaryExpressionSyntax postfixExpression &&
+                postfixExpression.OperatorToken.IsKind(SyntaxKind.ExclamationToken))
+            {
+                return postfixExpression.Operand;
+            }
+            return expression;
+        }
+
+        // Obsługa parametrów funkcji
         public override SyntaxNode VisitParameter(ParameterSyntax node)
         {
-            // Najpierw wywołujemy bazową metodę, aby zachować standardowe zachowanie
-            node = (ParameterSyntax)base.VisitParameter(node);
-
-            // Sprawdzamy, czy parametr ma wartość domyślną
             if (node.Default != null)
             {
-                // Sprawdzamy, czy wartość domyślna zawiera operator !
-                var defaultValue = node.Default.Value;
-                if (defaultValue is PostfixUnaryExpressionSyntax postfixExpression &&
-                    postfixExpression.OperatorToken.IsKind(SyntaxKind.ExclamationToken))
+                var newValue = RemoveNullForgivingOperator(node.Default.Value);
+                if (newValue != node.Default.Value)
                 {
-                    // Tworzymy nową wartość domyślną bez operatora !
-                    var newDefaultValue = postfixExpression.Operand;
-
-                    // Tworzymy nowy węzeł parametru z zaktualizowaną wartością domyślną
                     return node.WithDefault(
-                        SyntaxFactory.EqualsValueClause(newDefaultValue)
+                        SyntaxFactory.EqualsValueClause(newValue)
                             .WithLeadingTrivia(node.Default.GetLeadingTrivia())
                             .WithTrailingTrivia(node.Default.GetTrailingTrivia())
                     );
                 }
             }
+            return base.VisitParameter(node);
+        }
 
+        // Obsługa pól
+        public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
+        {
+            return VisitMemberDeclaration(node);
+        }
+
+        // Obsługa zdarzeń
+        public override SyntaxNode VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
+        {
+            return VisitMemberDeclaration(node);
+        }
+
+        // Wspólna metoda dla pól i zdarzeń
+        private SyntaxNode VisitMemberDeclaration<T>(T node) where T : MemberDeclarationSyntax
+        {
+            var declaration = node is FieldDeclarationSyntax field ? field.Declaration :
+                            (node is EventFieldDeclarationSyntax eventField ? eventField.Declaration : null);
+
+            if (declaration != null)
+            {
+                bool changed = false;
+                var newVariables = new SeparatedSyntaxList<VariableDeclaratorSyntax>();
+
+                foreach (var variable in declaration.Variables)
+                {
+                    var newVariable = variable;
+                    if (variable.Initializer != null)
+                    {
+                        var newValue = RemoveNullForgivingOperator(variable.Initializer.Value);
+                        if (newValue != variable.Initializer.Value)
+                        {
+                            newVariable = variable.WithInitializer(
+                                SyntaxFactory.EqualsValueClause(newValue)
+                                    .WithLeadingTrivia(variable.Initializer.GetLeadingTrivia())
+                                    .WithTrailingTrivia(variable.Initializer.GetTrailingTrivia())
+                            );
+                            changed = true;
+                        }
+                    }
+                    newVariables = newVariables.Add(newVariable);
+                }
+
+                if (changed)
+                {
+                    var newDeclaration = declaration.WithVariables(newVariables);
+
+                    if (node is FieldDeclarationSyntax fieldDecl)
+                        return fieldDecl.WithDeclaration((VariableDeclarationSyntax)newDeclaration);
+                    else if (node is EventFieldDeclarationSyntax eventDecl)
+                        return eventDecl.WithDeclaration((VariableDeclarationSyntax)newDeclaration);
+                }
+            }
+
+            return node;
+        }
+
+        // Nie odwiedzamy ciał metod - nadpisujemy te metody, aby zatrzymać przechodzenie w dół drzewa
+        public override SyntaxNode VisitMethodDeclaration(MethodDeclarationSyntax node)
+        {
+            // Przetwarzamy tylko parametry metody
+            var newParams = (ParameterListSyntax)Visit(node.ParameterList);
+            if (newParams != node.ParameterList)
+            {
+                return node.WithParameterList(newParams);
+            }
+            return node;
+        }
+
+        public override SyntaxNode VisitConstructorDeclaration(ConstructorDeclarationSyntax node)
+        {
+            // Przetwarzamy tylko parametry konstruktora
+            var newParams = (ParameterListSyntax)Visit(node.ParameterList);
+            if (newParams != node.ParameterList)
+            {
+                return node.WithParameterList(newParams);
+            }
+            return node;
+        }
+
+        public override SyntaxNode VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
+        {
+            // Przetwarzamy tylko parametry funkcji lokalnej
+            var newParams = (ParameterListSyntax)Visit(node.ParameterList);
+            if (newParams != node.ParameterList)
+            {
+                return node.WithParameterList(newParams);
+            }
             return node;
         }
     }
