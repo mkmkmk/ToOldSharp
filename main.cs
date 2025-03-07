@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -198,6 +199,30 @@ namespace CSharpLegacyConverter
             }
         }
     }
+
+
+    public class RegexConverter
+    {
+        public string Convert(string sourceCode)
+        {
+            // Sprawdź, czy kod zawiera deklarację namespace z średnikiem
+            if (!Regex.IsMatch(sourceCode, @"namespace\s+[^{;]+;"))
+            {
+                return sourceCode; // Nic do zmiany
+            }
+
+            // Zamień deklarację namespace z średnikiem na deklarację z klamrami
+            string result = Regex.Replace(sourceCode,
+                @"(namespace\s+[^{;]+);",
+                "$1\n{");
+
+            // Dodaj zamykającą klamrę na końcu pliku
+            result += "\n}";
+
+            return result;
+        }
+    }
+
 
     /// <summary>
     /// Konwertuje wyrażenia lambda (expression-bodied members) na pełne metody z blokami
