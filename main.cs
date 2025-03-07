@@ -587,7 +587,7 @@ namespace CSharpLegacyConverter
 
             newClassDeclaration = newClassDeclaration.WithMembers(SyntaxFactory.List(members));
 
-            return newClassDeclaration;
+            return newClassDeclaration.NormalizeWhitespace();
         }
     }
 }
