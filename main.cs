@@ -103,6 +103,7 @@ namespace CSharpLegacyConverter
             newRoot = (CSharpSyntaxNode)new PropertyInitializerRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new InitOnlyPropertyRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new RecordRewriter().Visit(newRoot);
+            newRoot = (CSharpSyntaxNode)new NullForgivingOperatorRemover().Visit(newRoot);
 
             // Zachowaj oryginalne formatowanie - nie używaj Formatter.Format
             string newCode = newRoot.ToFullString();
@@ -124,6 +125,39 @@ namespace CSharpLegacyConverter
     }
 
 
+    /// <summary>
+    /// Konwerter Roslyn usuwający operator ! z wartości domyślnych parametrów funkcji
+    /// </summary>
+    public class NullForgivingOperatorRemover : CSharpSyntaxRewriter
+    {
+        public override SyntaxNode VisitParameter(ParameterSyntax node)
+        {
+            // Najpierw wywołujemy bazową metodę, aby zachować standardowe zachowanie
+            node = (ParameterSyntax)base.VisitParameter(node);
+
+            // Sprawdzamy, czy parametr ma wartość domyślną
+            if (node.Default != null)
+            {
+                // Sprawdzamy, czy wartość domyślna zawiera operator !
+                var defaultValue = node.Default.Value;
+                if (defaultValue is PostfixUnaryExpressionSyntax postfixExpression &&
+                    postfixExpression.OperatorToken.IsKind(SyntaxKind.ExclamationToken))
+                {
+                    // Tworzymy nową wartość domyślną bez operatora !
+                    var newDefaultValue = postfixExpression.Operand;
+
+                    // Tworzymy nowy węzeł parametru z zaktualizowaną wartością domyślną
+                    return node.WithDefault(
+                        SyntaxFactory.EqualsValueClause(newDefaultValue)
+                            .WithLeadingTrivia(node.Default.GetLeadingTrivia())
+                            .WithTrailingTrivia(node.Default.GetTrailingTrivia())
+                    );
+                }
+            }
+
+            return node;
+        }
+    }
 
 
     public class NamespaceConverter
