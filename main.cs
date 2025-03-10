@@ -204,15 +204,80 @@ namespace CSharpLegacyConverter
             );
         }
 
+        // Rekurencyjne przetwarzanie typów, w tym typów zagnieżdżonych w typach generycznych
+        private TypeSyntax ProcessType(TypeSyntax type)
+        {
+            if (type is NullableTypeSyntax nullableType)
+            {
+                return RemoveNullableOperator(nullableType);
+            }
+            else if (type is GenericNameSyntax genericName)
+            {
+                // Sprawdzamy, czy którykolwiek z argumentów typu jest nullowalny
+                bool hasNullableTypeArgument = genericName.TypeArgumentList.Arguments.Any(arg =>
+                    arg is NullableTypeSyntax ||
+                    (arg is GenericNameSyntax nestedGeneric &&
+                     nestedGeneric.TypeArgumentList.Arguments.Any(nestedArg => nestedArg is NullableTypeSyntax)));
+
+                if (hasNullableTypeArgument)
+                {
+                    // Tworzymy nową listę argumentów typu
+                    var newArguments = new SeparatedSyntaxList<TypeSyntax>();
+
+                    foreach (var arg in genericName.TypeArgumentList.Arguments)
+                    {
+                        // Rekurencyjnie przetwarzamy każdy argument typu
+                        newArguments = newArguments.Add(ProcessType(arg));
+                    }
+
+                    // Tworzymy nową listę argumentów typu
+                    var newTypeArgumentList = SyntaxFactory.TypeArgumentList(newArguments);
+
+                    // Zwracamy zmodyfikowany węzeł
+                    return genericName.WithTypeArgumentList(newTypeArgumentList);
+                }
+            }
+            else if (type is ArrayTypeSyntax arrayType)
+            {
+                // Obsługa tablic z typami nullowalnymi, np. byte[]?
+                var elementType = arrayType.ElementType;
+                if (elementType is NullableTypeSyntax nullableElementType)
+                {
+                    return SyntaxFactory.ArrayType(
+                        RemoveNullableOperator(nullableElementType),
+                        arrayType.RankSpecifiers);
+                }
+            }
+            else if (type is QualifiedNameSyntax qualifiedName)
+            {
+                // Obsługa kwalifikowanych nazw typów, np. System.Collections.Generic.List<string?>
+                var right = qualifiedName.Right;
+                if (right is GenericNameSyntax genericRight)
+                {
+                    var processedRight = ProcessType(genericRight);
+                    if (processedRight != right)
+                    {
+                        return qualifiedName.WithRight((SimpleNameSyntax)processedRight);
+                    }
+                }
+            }
+
+            return type;
+        }
+
         // Obsługa parametrów funkcji
         public override SyntaxNode VisitParameter(ParameterSyntax node)
         {
             var newNode = node;
 
-            // Obsługa typów nullowalnych w parametrach (int? -> int)
-            if (node.Type is NullableTypeSyntax nullableType)
+            // Obsługa typów nullowalnych w parametrach, w tym typów generycznych
+            if (node.Type != null)
             {
-                newNode = newNode.WithType(RemoveNullableOperator(nullableType));
+                var newType = ProcessType(node.Type);
+                if (newType != node.Type)
+                {
+                    newNode = newNode.WithType(newType);
+                }
             }
 
             // Obsługa wartości domyślnych
@@ -235,12 +300,13 @@ namespace CSharpLegacyConverter
         // Obsługa pól
         public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
         {
-            // Obsługa typów nullowalnych w polach (int? -> int)
+            // Obsługa typów nullowalnych w polach, w tym typów generycznych
             var newNode = node;
-            if (node.Declaration.Type is NullableTypeSyntax nullableType)
+            var newType = ProcessType(node.Declaration.Type);
+            if (newType != node.Declaration.Type)
             {
                 newNode = newNode.WithDeclaration(
-                    newNode.Declaration.WithType(RemoveNullableOperator(nullableType))
+                    newNode.Declaration.WithType(newType)
                 );
             }
 
@@ -280,12 +346,13 @@ namespace CSharpLegacyConverter
         // Obsługa zdarzeń
         public override SyntaxNode VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
         {
-            // Obsługa typów nullowalnych w zdarzeniach (EventHandler? -> EventHandler)
+            // Obsługa typów nullowalnych w zdarzeniach, w tym typów generycznych
             var newNode = node;
-            if (node.Declaration.Type is NullableTypeSyntax nullableType)
+            var newType = ProcessType(node.Declaration.Type);
+            if (newType != node.Declaration.Type)
             {
                 newNode = newNode.WithDeclaration(
-                    newNode.Declaration.WithType(RemoveNullableOperator(nullableType))
+                    newNode.Declaration.WithType(newType)
                 );
             }
 
@@ -327,10 +394,11 @@ namespace CSharpLegacyConverter
         {
             var newNode = node;
 
-            // Obsługa typów nullowalnych w właściwościach (string? -> string)
-            if (node.Type is NullableTypeSyntax nullableType)
+            // Obsługa typów nullowalnych w właściwościach, w tym typów generycznych
+            var newType = ProcessType(node.Type);
+            if (newType != node.Type)
             {
-                newNode = newNode.WithType(RemoveNullableOperator(nullableType));
+                newNode = newNode.WithType(newType);
             }
 
             // Przetwarzamy tylko inicjalizator właściwości, nie ciało
@@ -356,10 +424,11 @@ namespace CSharpLegacyConverter
         {
             var newNode = node;
 
-            // Obsługa typów nullowalnych w zwracanych typach metod (Task<string?> -> Task<string>)
-            if (node.ReturnType is NullableTypeSyntax nullableType)
+            // Obsługa typów nullowalnych w zwracanych typach metod, w tym typów generycznych
+            var newReturnType = ProcessType(node.ReturnType);
+            if (newReturnType != node.ReturnType)
             {
-                newNode = newNode.WithReturnType(RemoveNullableOperator(nullableType));
+                newNode = newNode.WithReturnType(newReturnType);
             }
 
             // Przetwarzamy tylko parametry metody
@@ -390,10 +459,11 @@ namespace CSharpLegacyConverter
         {
             var newNode = node;
 
-            // Obsługa typów nullowalnych w zwracanych typach funkcji lokalnych
-            if (node.ReturnType is NullableTypeSyntax nullableType)
+            // Obsługa typów nullowalnych w zwracanych typach funkcji lokalnych, w tym typów generycznych
+            var newReturnType = ProcessType(node.ReturnType);
+            if (newReturnType != node.ReturnType)
             {
-                newNode = newNode.WithReturnType(RemoveNullableOperator(nullableType));
+                newNode = newNode.WithReturnType(newReturnType);
             }
 
             // Przetwarzamy tylko parametry funkcji lokalnej
@@ -412,10 +482,11 @@ namespace CSharpLegacyConverter
         {
             var newNode = node;
 
-            // Obsługa typów nullowalnych w zwracanych typach delegatów
-            if (node.ReturnType is NullableTypeSyntax nullableType)
+            // Obsługa typów nullowalnych w zwracanych typach delegatów, w tym typów generycznych
+            var newReturnType = ProcessType(node.ReturnType);
+            if (newReturnType != node.ReturnType)
             {
-                newNode = newNode.WithReturnType(RemoveNullableOperator(nullableType));
+                newNode = newNode.WithReturnType(newReturnType);
             }
 
             // Przetwarzamy parametry delegata
@@ -428,38 +499,73 @@ namespace CSharpLegacyConverter
             return newNode;
         }
 
-        // Obsługa typów generycznych z typami nullowalnymi
-        public override SyntaxNode VisitGenericName(GenericNameSyntax node)
+        // Obsługa deklaracji zmiennych lokalnych
+        public override SyntaxNode VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
         {
-            // Sprawdzamy, czy którykolwiek z argumentów typu jest nullowalny
-            bool hasNullableTypeArgument = node.TypeArgumentList.Arguments.Any(arg => arg is NullableTypeSyntax);
-
-            if (hasNullableTypeArgument)
+            // Obsługa typów nullowalnych w zmiennych lokalnych, w tym typów generycznych
+            var newNode = node;
+            var newType = ProcessType(node.Declaration.Type);
+            if (newType != node.Declaration.Type)
             {
-                // Tworzymy nową listę argumentów typu
-                var newArguments = new SeparatedSyntaxList<TypeSyntax>();
-
-                foreach (var arg in node.TypeArgumentList.Arguments)
-                {
-                    if (arg is NullableTypeSyntax nullableType)
-                    {
-                        // Usuwamy operator ? z typu
-                        newArguments = newArguments.Add(RemoveNullableOperator(nullableType));
-                    }
-                    else
-                    {
-                        newArguments = newArguments.Add(arg);
-                    }
-                }
-
-                // Tworzymy nową listę argumentów typu
-                var newTypeArgumentList = SyntaxFactory.TypeArgumentList(newArguments);
-
-                // Zwracamy zmodyfikowany węzeł
-                return node.WithTypeArgumentList(newTypeArgumentList);
+                newNode = newNode.WithDeclaration(
+                    newNode.Declaration.WithType(newType)
+                );
             }
 
-            return base.VisitGenericName(node);
+            return newNode;
+        }
+
+        // Obsługa deklaracji używania (using)
+        public override SyntaxNode VisitUsingStatement(UsingStatementSyntax node)
+        {
+            // Obsługa typów nullowalnych w deklaracjach using, w tym typów generycznych
+            if (node.Declaration != null)
+            {
+                var newType = ProcessType(node.Declaration.Type);
+                if (newType != node.Declaration.Type)
+                {
+                    return node.WithDeclaration(
+                        node.Declaration.WithType(newType)
+                    );
+                }
+            }
+
+            return node;
+        }
+
+        // Obsługa wyrażeń typu (typeof, is, as)
+        public override SyntaxNode VisitTypeOfExpression(TypeOfExpressionSyntax node)
+        {
+            var newType = ProcessType(node.Type);
+            if (newType != node.Type)
+            {
+                return node.WithType(newType);
+            }
+            return node;
+        }
+
+        // Obsługa wyrażeń is
+        public override SyntaxNode VisitIsPatternExpression(IsPatternExpressionSyntax node)
+        {
+            // Nie przetwarzamy wzorców w wyrażeniach is
+            return node;
+        }
+
+        // Obsługa wyrażeń as
+        public override SyntaxNode VisitBinaryExpression(BinaryExpressionSyntax node)
+        {
+            // Obsługa wyrażeń as z typami nullowalnymi
+            if (node.OperatorToken.IsKind(SyntaxKind.AsKeyword) && node.Right is TypeSyntax typeNode)
+            {
+                var newType = ProcessType(typeNode);
+                if (newType != typeNode)
+                {
+                    return node.WithRight(newType);
+                }
+            }
+
+            // Nie przetwarzamy innych wyrażeń binarnych
+            return node;
         }
     }
 
@@ -502,8 +608,6 @@ namespace CSharpLegacyConverter
             }
         }
     }
-
-
 
     /// <summary>
     /// Konwertuje wyrażenia lambda (expression-bodied members) na pełne metody z blokami
