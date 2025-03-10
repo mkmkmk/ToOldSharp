@@ -268,7 +268,8 @@ namespace CSharpLegacyConverter
         // Obsługa parametrów funkcji
         public override SyntaxNode VisitParameter(ParameterSyntax node)
         {
-            var newNode = node;
+            // Zachowujemy oryginalny węzeł do porównania
+            var originalNode = node;
 
             // Obsługa typów nullowalnych w parametrach, w tym typów generycznych
             if (node.Type != null)
@@ -276,25 +277,44 @@ namespace CSharpLegacyConverter
                 var newType = ProcessType(node.Type);
                 if (newType != node.Type)
                 {
-                    newNode = newNode.WithType(newType);
-                }
-            }
+                    // Zachowujemy wszystkie trivia, w tym spacje między typem a nazwą
+                    var typeTrailingTrivia = node.Type.GetTrailingTrivia();
+                    var identifierLeadingTrivia = node.Identifier.LeadingTrivia;
 
-            // Obsługa wartości domyślnych
-            if (newNode.Default != null)
-            {
-                var newValue = ProcessInitializerExpression(newNode.Default.Value);
-                if (newValue != newNode.Default.Value)
-                {
-                    newNode = newNode.WithDefault(
-                        SyntaxFactory.EqualsValueClause(newValue)
-                            .WithLeadingTrivia(newNode.Default.GetLeadingTrivia())
-                            .WithTrailingTrivia(newNode.Default.GetTrailingTrivia())
+                    // Tworzymy nowy typ z zachowaniem trivia
+                    newType = newType.WithTrailingTrivia(typeTrailingTrivia);
+
+                    // Tworzymy nowy węzeł parametru
+                    node = node.WithType(newType);
+
+                    // Upewniamy się, że zachowujemy spację między typem a nazwą
+                    node = node.WithIdentifier(
+                        node.Identifier.WithLeadingTrivia(identifierLeadingTrivia)
                     );
                 }
             }
 
-            return newNode;
+            // Obsługa wartości domyślnych
+            if (node.Default != null)
+            {
+                var newValue = ProcessInitializerExpression(node.Default.Value);
+                if (newValue != node.Default.Value)
+                {
+                    node = node.WithDefault(
+                        SyntaxFactory.EqualsValueClause(newValue)
+                            .WithLeadingTrivia(node.Default.GetLeadingTrivia())
+                            .WithTrailingTrivia(node.Default.GetTrailingTrivia())
+                    );
+                }
+            }
+
+            // Jeśli nic się nie zmieniło, zwracamy oryginalny węzeł
+            if (node == originalNode)
+            {
+                return base.VisitParameter(node);
+            }
+
+            return node;
         }
 
         // Obsługa pól
@@ -305,6 +325,10 @@ namespace CSharpLegacyConverter
             var newType = ProcessType(node.Declaration.Type);
             if (newType != node.Declaration.Type)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem a nazwą zmiennej
+                var typeTrailingTrivia = node.Declaration.Type.GetTrailingTrivia();
+                newType = newType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithDeclaration(
                     newNode.Declaration.WithType(newType)
                 );
@@ -351,6 +375,10 @@ namespace CSharpLegacyConverter
             var newType = ProcessType(node.Declaration.Type);
             if (newType != node.Declaration.Type)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem a nazwą zdarzenia
+                var typeTrailingTrivia = node.Declaration.Type.GetTrailingTrivia();
+                newType = newType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithDeclaration(
                     newNode.Declaration.WithType(newType)
                 );
@@ -398,6 +426,10 @@ namespace CSharpLegacyConverter
             var newType = ProcessType(node.Type);
             if (newType != node.Type)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem a nazwą właściwości
+                var typeTrailingTrivia = node.Type.GetTrailingTrivia();
+                newType = newType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithType(newType);
             }
 
@@ -428,6 +460,10 @@ namespace CSharpLegacyConverter
             var newReturnType = ProcessType(node.ReturnType);
             if (newReturnType != node.ReturnType)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem zwracanym a nazwą metody
+                var typeTrailingTrivia = node.ReturnType.GetTrailingTrivia();
+                newReturnType = newReturnType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithReturnType(newReturnType);
             }
 
@@ -463,6 +499,10 @@ namespace CSharpLegacyConverter
             var newReturnType = ProcessType(node.ReturnType);
             if (newReturnType != node.ReturnType)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem zwracanym a nazwą funkcji
+                var typeTrailingTrivia = node.ReturnType.GetTrailingTrivia();
+                newReturnType = newReturnType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithReturnType(newReturnType);
             }
 
@@ -486,6 +526,10 @@ namespace CSharpLegacyConverter
             var newReturnType = ProcessType(node.ReturnType);
             if (newReturnType != node.ReturnType)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem zwracanym a nazwą delegata
+                var typeTrailingTrivia = node.ReturnType.GetTrailingTrivia();
+                newReturnType = newReturnType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithReturnType(newReturnType);
             }
 
@@ -507,6 +551,10 @@ namespace CSharpLegacyConverter
             var newType = ProcessType(node.Declaration.Type);
             if (newType != node.Declaration.Type)
             {
+                // Zachowujemy wszystkie trivia, w tym spacje między typem a nazwą zmiennej
+                var typeTrailingTrivia = node.Declaration.Type.GetTrailingTrivia();
+                newType = newType.WithTrailingTrivia(typeTrailingTrivia);
+
                 newNode = newNode.WithDeclaration(
                     newNode.Declaration.WithType(newType)
                 );
@@ -524,6 +572,10 @@ namespace CSharpLegacyConverter
                 var newType = ProcessType(node.Declaration.Type);
                 if (newType != node.Declaration.Type)
                 {
+                    // Zachowujemy wszystkie trivia, w tym spacje między typem a nazwą zmiennej
+                    var typeTrailingTrivia = node.Declaration.Type.GetTrailingTrivia();
+                    newType = newType.WithTrailingTrivia(typeTrailingTrivia);
+
                     return node.WithDeclaration(
                         node.Declaration.WithType(newType)
                     );
