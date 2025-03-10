@@ -103,7 +103,7 @@ namespace CSharpLegacyConverter
             newRoot = (CSharpSyntaxNode)new PropertyInitializerRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new InitOnlyPropertyRewriter().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new RecordRewriter().Visit(newRoot);
-            newRoot = (CSharpSyntaxNode)new NullForgivingOperatorRemover().Visit(newRoot);
+            newRoot = (CSharpSyntaxNode)new NullOperatorsRemover().Visit(newRoot);
             newRoot = (CSharpSyntaxNode)new GlobalUsingCommenter().Visit(newRoot);
 
             // Zachowaj oryginalne formatowanie - nie używaj Formatter.Format
@@ -127,107 +127,253 @@ namespace CSharpLegacyConverter
 
 
     /// <summary>
-    /// Konwerter Roslyn usuwający operator ! z wartości domyślnych parametrów funkcji, pól i zdarzeń
+    /// Konwerter Roslyn usuwający operatory ! oraz ? z typów i wartości domyślnych parametrów funkcji, pól i zdarzeń
     /// </summary>
-    public class NullForgivingOperatorRemover : CSharpSyntaxRewriter
+    public class NullOperatorsRemover : CSharpSyntaxRewriter
     {
-        // Metoda pomocnicza do usuwania operatora ! z wyrażenia
-        private ExpressionSyntax RemoveNullForgivingOperator(ExpressionSyntax expression)
+        // Flaga określająca, czy wartość jest zbyt skomplikowana do automatycznej konwersji
+        private bool IsComplexExpression(ExpressionSyntax expression)
         {
+            // Sprawdzamy, czy wyrażenie zawiera operatory warunkowe, wywołania metod, itp.
+            return expression.DescendantNodes().Any(n =>
+                n is ConditionalExpressionSyntax || // ternary operator (a ? b : c)
+                n is InvocationExpressionSyntax ||  // wywołania metod
+                n is LambdaExpressionSyntax ||      // wyrażenia lambda
+                n is QueryExpressionSyntax);        // wyrażenia LINQ
+        }
+
+        // Metoda pomocnicza do usuwania operatorów ! i ? z wyrażenia
+        private ExpressionSyntax ProcessInitializerExpression(ExpressionSyntax expression)
+        {
+            // Jeśli wyrażenie jest zbyt skomplikowane, dodajemy komentarz i zwracamy oryginalne wyrażenie
+            if (IsComplexExpression(expression))
+            {
+                // Dodajemy komentarz przed wyrażeniem
+                var commentTrivia = SyntaxFactory.TriviaList(
+                    SyntaxFactory.Comment("/* UWAGA: Skomplikowane wyrażenie z operatorami nullowalnymi */"),
+                    SyntaxFactory.CarriageReturnLineFeed);
+
+                return expression.WithLeadingTrivia(
+                    commentTrivia.AddRange(expression.GetLeadingTrivia()));
+            }
+
+            // Usuwanie operatora !
             if (expression is PostfixUnaryExpressionSyntax postfixExpression &&
                 postfixExpression.OperatorToken.IsKind(SyntaxKind.ExclamationToken))
             {
-                return postfixExpression.Operand;
+                return ProcessInitializerExpression(postfixExpression.Operand);
             }
+
+            // Usuwanie operatora ?? (null coalescing)
+            if (expression is BinaryExpressionSyntax binaryExpression &&
+                binaryExpression.OperatorToken.IsKind(SyntaxKind.QuestionQuestionToken))
+            {
+                // Zamieniamy a ?? b na a
+                return ProcessInitializerExpression(binaryExpression.Left);
+            }
+
+            // Usuwanie operatora ?. (conditional access) - tylko w prostych przypadkach
+            if (expression is ConditionalAccessExpressionSyntax conditionalAccess)
+            {
+                // Zamieniamy obj?.Property na obj.Property
+                var memberBinding = conditionalAccess.WhenNotNull as MemberBindingExpressionSyntax;
+                if (memberBinding != null)
+                {
+                    return SyntaxFactory.MemberAccessExpression(
+                        SyntaxKind.SimpleMemberAccessExpression,
+                        ProcessInitializerExpression(conditionalAccess.Expression),
+                        memberBinding.Name);
+                }
+            }
+
             return expression;
+        }
+
+        // Metoda do bezpiecznego usuwania operatora ? z typu z zachowaniem trivia
+        private TypeSyntax RemoveNullableOperator(NullableTypeSyntax nullableType)
+        {
+            // Zachowujemy wszystkie trivia z oryginalnego typu
+            var elementType = nullableType.ElementType;
+
+            // Pobieramy trivia z operatora ? i dodajemy je do elementType
+            var questionMarkTrivia = nullableType.QuestionToken.TrailingTrivia;
+
+            // Zwracamy typ elementu z zachowaniem wszystkich trivia
+            return elementType.WithTrailingTrivia(
+                elementType.GetTrailingTrivia().AddRange(questionMarkTrivia)
+            );
         }
 
         // Obsługa parametrów funkcji
         public override SyntaxNode VisitParameter(ParameterSyntax node)
         {
-            if (node.Default != null)
+            var newNode = node;
+
+            // Obsługa typów nullowalnych w parametrach (int? -> int)
+            if (node.Type is NullableTypeSyntax nullableType)
             {
-                var newValue = RemoveNullForgivingOperator(node.Default.Value);
-                if (newValue != node.Default.Value)
+                newNode = newNode.WithType(RemoveNullableOperator(nullableType));
+            }
+
+            // Obsługa wartości domyślnych
+            if (newNode.Default != null)
+            {
+                var newValue = ProcessInitializerExpression(newNode.Default.Value);
+                if (newValue != newNode.Default.Value)
                 {
-                    return node.WithDefault(
+                    newNode = newNode.WithDefault(
                         SyntaxFactory.EqualsValueClause(newValue)
-                            .WithLeadingTrivia(node.Default.GetLeadingTrivia())
-                            .WithTrailingTrivia(node.Default.GetTrailingTrivia())
+                            .WithLeadingTrivia(newNode.Default.GetLeadingTrivia())
+                            .WithTrailingTrivia(newNode.Default.GetTrailingTrivia())
                     );
                 }
             }
-            return base.VisitParameter(node);
+
+            return newNode;
         }
 
         // Obsługa pól
         public override SyntaxNode VisitFieldDeclaration(FieldDeclarationSyntax node)
         {
-            return VisitMemberDeclaration(node);
+            // Obsługa typów nullowalnych w polach (int? -> int)
+            var newNode = node;
+            if (node.Declaration.Type is NullableTypeSyntax nullableType)
+            {
+                newNode = newNode.WithDeclaration(
+                    newNode.Declaration.WithType(RemoveNullableOperator(nullableType))
+                );
+            }
+
+            // Przetwarzanie inicjalizatorów pól
+            bool changed = false;
+            var newVariables = new SeparatedSyntaxList<VariableDeclaratorSyntax>();
+
+            foreach (var variable in newNode.Declaration.Variables)
+            {
+                var newVariable = variable;
+                if (variable.Initializer != null)
+                {
+                    var newValue = ProcessInitializerExpression(variable.Initializer.Value);
+                    if (newValue != variable.Initializer.Value)
+                    {
+                        newVariable = variable.WithInitializer(
+                            SyntaxFactory.EqualsValueClause(newValue)
+                                .WithLeadingTrivia(variable.Initializer.GetLeadingTrivia())
+                                .WithTrailingTrivia(variable.Initializer.GetTrailingTrivia())
+                        );
+                        changed = true;
+                    }
+                }
+                newVariables = newVariables.Add(newVariable);
+            }
+
+            if (changed)
+            {
+                newNode = newNode.WithDeclaration(
+                    newNode.Declaration.WithVariables(newVariables)
+                );
+            }
+
+            return newNode;
         }
 
         // Obsługa zdarzeń
         public override SyntaxNode VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
         {
-            return VisitMemberDeclaration(node);
+            // Obsługa typów nullowalnych w zdarzeniach (EventHandler? -> EventHandler)
+            var newNode = node;
+            if (node.Declaration.Type is NullableTypeSyntax nullableType)
+            {
+                newNode = newNode.WithDeclaration(
+                    newNode.Declaration.WithType(RemoveNullableOperator(nullableType))
+                );
+            }
+
+            // Przetwarzanie inicjalizatorów zdarzeń
+            bool changed = false;
+            var newVariables = new SeparatedSyntaxList<VariableDeclaratorSyntax>();
+
+            foreach (var variable in newNode.Declaration.Variables)
+            {
+                var newVariable = variable;
+                if (variable.Initializer != null)
+                {
+                    var newValue = ProcessInitializerExpression(variable.Initializer.Value);
+                    if (newValue != variable.Initializer.Value)
+                    {
+                        newVariable = variable.WithInitializer(
+                            SyntaxFactory.EqualsValueClause(newValue)
+                                .WithLeadingTrivia(variable.Initializer.GetLeadingTrivia())
+                                .WithTrailingTrivia(variable.Initializer.GetTrailingTrivia())
+                        );
+                        changed = true;
+                    }
+                }
+                newVariables = newVariables.Add(newVariable);
+            }
+
+            if (changed)
+            {
+                newNode = newNode.WithDeclaration(
+                    newNode.Declaration.WithVariables(newVariables)
+                );
+            }
+
+            return newNode;
         }
 
-        // Wspólna metoda dla pól i zdarzeń
-        private SyntaxNode VisitMemberDeclaration<T>(T node) where T : MemberDeclarationSyntax
+        // Obsługa właściwości
+        public override SyntaxNode VisitPropertyDeclaration(PropertyDeclarationSyntax node)
         {
-            var declaration = node is FieldDeclarationSyntax field ? field.Declaration :
-                            (node is EventFieldDeclarationSyntax eventField ? eventField.Declaration : null);
+            var newNode = node;
 
-            if (declaration != null)
+            // Obsługa typów nullowalnych w właściwościach (string? -> string)
+            if (node.Type is NullableTypeSyntax nullableType)
             {
-                bool changed = false;
-                var newVariables = new SeparatedSyntaxList<VariableDeclaratorSyntax>();
+                newNode = newNode.WithType(RemoveNullableOperator(nullableType));
+            }
 
-                foreach (var variable in declaration.Variables)
+            // Przetwarzamy tylko inicjalizator właściwości, nie ciało
+            if (newNode.Initializer != null)
+            {
+                var newValue = ProcessInitializerExpression(newNode.Initializer.Value);
+                if (newValue != newNode.Initializer.Value)
                 {
-                    var newVariable = variable;
-                    if (variable.Initializer != null)
-                    {
-                        var newValue = RemoveNullForgivingOperator(variable.Initializer.Value);
-                        if (newValue != variable.Initializer.Value)
-                        {
-                            newVariable = variable.WithInitializer(
-                                SyntaxFactory.EqualsValueClause(newValue)
-                                    .WithLeadingTrivia(variable.Initializer.GetLeadingTrivia())
-                                    .WithTrailingTrivia(variable.Initializer.GetTrailingTrivia())
-                            );
-                            changed = true;
-                        }
-                    }
-                    newVariables = newVariables.Add(newVariable);
-                }
-
-                if (changed)
-                {
-                    var newDeclaration = declaration.WithVariables(newVariables);
-
-                    if (node is FieldDeclarationSyntax fieldDecl)
-                        return fieldDecl.WithDeclaration((VariableDeclarationSyntax)newDeclaration);
-                    else if (node is EventFieldDeclarationSyntax eventDecl)
-                        return eventDecl.WithDeclaration((VariableDeclarationSyntax)newDeclaration);
+                    newNode = newNode.WithInitializer(
+                        SyntaxFactory.EqualsValueClause(newValue)
+                            .WithLeadingTrivia(newNode.Initializer.GetLeadingTrivia())
+                            .WithTrailingTrivia(newNode.Initializer.GetTrailingTrivia())
+                    );
                 }
             }
 
-            return node;
+            // Nie przetwarzamy ciała właściwości (gettery/settery)
+            return newNode;
         }
 
-        // Nie odwiedzamy ciał metod - nadpisujemy te metody, aby zatrzymać przechodzenie w dół drzewa
+        // Obsługa metod - tylko typy i parametry, nie ciała
         public override SyntaxNode VisitMethodDeclaration(MethodDeclarationSyntax node)
         {
+            var newNode = node;
+
+            // Obsługa typów nullowalnych w zwracanych typach metod (Task<string?> -> Task<string>)
+            if (node.ReturnType is NullableTypeSyntax nullableType)
+            {
+                newNode = newNode.WithReturnType(RemoveNullableOperator(nullableType));
+            }
+
             // Przetwarzamy tylko parametry metody
             var newParams = (ParameterListSyntax)Visit(node.ParameterList);
             if (newParams != node.ParameterList)
             {
-                return node.WithParameterList(newParams);
+                newNode = newNode.WithParameterList(newParams);
             }
-            return node;
+
+            // Nie przetwarzamy ciała metody
+            return newNode;
         }
 
+        // Obsługa konstruktorów - tylko parametry, nie ciała
         public override SyntaxNode VisitConstructorDeclaration(ConstructorDeclarationSyntax node)
         {
             // Przetwarzamy tylko parametry konstruktora
@@ -239,15 +385,81 @@ namespace CSharpLegacyConverter
             return node;
         }
 
+        // Obsługa funkcji lokalnych - tylko typy i parametry, nie ciała
         public override SyntaxNode VisitLocalFunctionStatement(LocalFunctionStatementSyntax node)
         {
+            var newNode = node;
+
+            // Obsługa typów nullowalnych w zwracanych typach funkcji lokalnych
+            if (node.ReturnType is NullableTypeSyntax nullableType)
+            {
+                newNode = newNode.WithReturnType(RemoveNullableOperator(nullableType));
+            }
+
             // Przetwarzamy tylko parametry funkcji lokalnej
             var newParams = (ParameterListSyntax)Visit(node.ParameterList);
             if (newParams != node.ParameterList)
             {
-                return node.WithParameterList(newParams);
+                newNode = newNode.WithParameterList(newParams);
             }
-            return node;
+
+            // Nie przetwarzamy ciała funkcji lokalnej
+            return newNode;
+        }
+
+        // Obsługa delegatów
+        public override SyntaxNode VisitDelegateDeclaration(DelegateDeclarationSyntax node)
+        {
+            var newNode = node;
+
+            // Obsługa typów nullowalnych w zwracanych typach delegatów
+            if (node.ReturnType is NullableTypeSyntax nullableType)
+            {
+                newNode = newNode.WithReturnType(RemoveNullableOperator(nullableType));
+            }
+
+            // Przetwarzamy parametry delegata
+            var newParams = (ParameterListSyntax)Visit(node.ParameterList);
+            if (newParams != node.ParameterList)
+            {
+                newNode = newNode.WithParameterList(newParams);
+            }
+
+            return newNode;
+        }
+
+        // Obsługa typów generycznych z typami nullowalnymi
+        public override SyntaxNode VisitGenericName(GenericNameSyntax node)
+        {
+            // Sprawdzamy, czy którykolwiek z argumentów typu jest nullowalny
+            bool hasNullableTypeArgument = node.TypeArgumentList.Arguments.Any(arg => arg is NullableTypeSyntax);
+
+            if (hasNullableTypeArgument)
+            {
+                // Tworzymy nową listę argumentów typu
+                var newArguments = new SeparatedSyntaxList<TypeSyntax>();
+
+                foreach (var arg in node.TypeArgumentList.Arguments)
+                {
+                    if (arg is NullableTypeSyntax nullableType)
+                    {
+                        // Usuwamy operator ? z typu
+                        newArguments = newArguments.Add(RemoveNullableOperator(nullableType));
+                    }
+                    else
+                    {
+                        newArguments = newArguments.Add(arg);
+                    }
+                }
+
+                // Tworzymy nową listę argumentów typu
+                var newTypeArgumentList = SyntaxFactory.TypeArgumentList(newArguments);
+
+                // Zwracamy zmodyfikowany węzeł
+                return node.WithTypeArgumentList(newTypeArgumentList);
+            }
+
+            return base.VisitGenericName(node);
         }
     }
 
